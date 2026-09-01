@@ -1,0 +1,43 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+model User {
+  id           Int     @id @default(autoincrement())
+  username     String  @unique
+  passwordHash String
+  role         String  @default("user")
+  active       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Unit {
+  id         Int      @id @default(autoincrement())
+  trackingId Int      @unique
+  imei       String   @unique
+  name       String?
+  plate      String?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  positions Position[]
+}
+
+model Position {
+  id         BigInt   @id @default(autoincrement())
+  unitId     Int
+  latitude   Decimal
+  longitude  Decimal
+  speed      Decimal?
+  heading    Decimal?
+  recordedAt DateTime
+
+  unit Unit @relation(fields: [unitId], references: [id])
+}

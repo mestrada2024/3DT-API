@@ -1,0 +1,57 @@
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: dms-api
+
+    restart: unless-stopped
+
+    ports:
+      - "3010:3010"
+
+    env_file:
+      - .env
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    volumes:
+      - ./logs:/app/logs
+
+  db:
+    image: mariadb:11.8
+
+    container_name: dms-api-db
+
+    restart: unless-stopped
+
+    environment:
+      MARIADB_DATABASE: dmsapi
+      MARIADB_USER: dmsapi
+      MARIADB_PASSWORD: DmsBDD
+      MARIADB_ROOT_PASSWORD: DmsBDD
+
+    volumes:
+      - mariadb_data:/var/lib/mysql
+
+    ports:
+      - "3307:3306"
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "healthcheck.sh",
+          "--connect",
+          "--innodb_initialized"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mariadb_data:
