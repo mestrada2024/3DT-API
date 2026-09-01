@@ -16,6 +16,10 @@ const app = Fastify({
 
 async function start() {
   try {
+    // =========================================================
+    // PLUGINS
+    // =========================================================
+
     // Prisma
     await app.register(prismaPlugin);
 
@@ -28,22 +32,31 @@ async function start() {
     // 3DTracking
     await app.register(tracking3dPlugin);
 
-    // Tracking routes
+
+    // =========================================================
+    // ROUTES
+    // =========================================================
+
+    // Tracking
     await app.register(trackingRoutes, {
       prefix: "/api/v1/tracking"
     });
 
-    // Authentication routes
+    // Authentication
     await app.register(authRoutes, {
       prefix: "/api/v1/auth"
     });
 
-    // Units routes
+    // Units
     await app.register(unitsRoutes, {
       prefix: "/api/v1/units"
     });
 
-    // Health check
+
+    // =========================================================
+    // HEALTH CHECK
+    // =========================================================
+
     app.get("/health", async () => {
       return {
         success: true,
@@ -52,6 +65,11 @@ async function start() {
         timestamp: new Date().toISOString()
       };
     });
+
+
+    // =========================================================
+    // START SERVER
+    // =========================================================
 
     await app.listen({
       host: "0.0.0.0",
