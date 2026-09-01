@@ -30,10 +30,10 @@ services:
     restart: unless-stopped
 
     environment:
-      MARIADB_DATABASE: dmsapi
-      MARIADB_USER: dmsapi
-      MARIADB_PASSWORD: DmsBDD
-      MARIADB_ROOT_PASSWORD: DmsBDD
+      MARIADB_DATABASE: ${DB_NAME}
+      MARIADB_USER: ${DB_USER}
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
 
     volumes:
       - mariadb_data:/var/lib/mysql

@@ -1,39 +1,128 @@
-import { FastifyPluginAsync } from "fastify";
+import {
+  FastifyPluginAsync
+} from "fastify";
 
-const trackingRoutes: FastifyPluginAsync = async (app) => {
+const trackingRoutes:
+  FastifyPluginAsync =
+  async (app) => {
 
-  app.get("/test-auth", {
-    preHandler: async (request) => {
-      await request.jwtVerify();
-    }
-  }, async (request, reply) => {
+    /**
+     * Test de autenticación
+     *
+     * GET
+     * /api/v1/tracking/test-auth
+     */
+    app.get(
+      "/test-auth",
+      {
+        preHandler: async (request) => {
 
-    try {
+          await request.jwtVerify();
 
-      const session = await app.tracking3d.authenticate();
-
-      return {
-        success: true,
-        message: "3Dtracking authentication successful",
-        session: {
-          userIdGuid: session.userIdGuid,
-          sessionId: session.sessionId
         }
-      };
+      },
+      async (request, reply) => {
 
-    } catch (error) {
+        try {
 
-      app.log.error(error);
+          const session =
+            await app.tracking3d.authenticate();
 
-      return reply.code(502).send({
-        success: false,
-        message: "Unable to authenticate with 3Dtracking"
-      });
+          return {
 
-    }
+            success: true,
 
-  });
+            message:
+              "3Dtracking authentication successful",
 
-};
+            session: {
+
+              userIdGuid:
+                session.userIdGuid,
+
+              sessionId:
+                session.sessionId
+
+            }
+
+          };
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          return reply
+            .code(502)
+            .send({
+
+              success: false,
+
+              error:
+                "TRACKING3D_AUTH_ERROR",
+
+              message:
+                "Unable to authenticate with 3Dtracking"
+
+            });
+
+        }
+      }
+    );
+
+    /**
+     * Obtener últimas posiciones
+     *
+     * GET
+     * /api/v1/tracking/latest-positions
+     */
+    app.get(
+      "/latest-positions",
+      {
+        preHandler: async (request) => {
+
+          await request.jwtVerify();
+
+        }
+      },
+      async (request, reply) => {
+
+        try {
+
+          const data =
+            await app.tracking3d
+              .getLatestPositions();
+
+          return {
+
+            success: true,
+
+            data
+
+          };
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          return reply
+            .code(502)
+            .send({
+
+              success: false,
+
+              error:
+                "TRACKING3D_ERROR",
+
+              message:
+                "Unable to obtain positions from 3Dtracking"
+
+            });
+
+        }
+
+      }
+    );
+
+  };
 
 export default trackingRoutes;
