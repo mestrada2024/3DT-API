@@ -1,5 +1,14 @@
 import Fastify from "fastify";
 
+import helmet
+  from "@fastify/helmet";
+
+import cors
+  from "@fastify/cors";
+
+import rateLimit
+  from "@fastify/rate-limit";
+
 import prismaPlugin
   from "./plugins/prisma";
 
@@ -29,6 +38,31 @@ const app =
 
 
 async function start() {
+
+  await app.register(
+    helmet
+  );
+
+  await app.register(
+    cors,
+    {
+      origin:
+        process.env.CORS_ORIGIN === "*" ||
+        !process.env.CORS_ORIGIN
+          ? true
+          : process.env.CORS_ORIGIN
+              .split(",")
+              .map((origin) => origin.trim())
+    }
+  );
+
+  await app.register(
+    rateLimit,
+    {
+      max: 100,
+      timeWindow: "1 minute"
+    }
+  );
 
   await app.register(
     prismaPlugin
