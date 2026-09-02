@@ -104,6 +104,47 @@ export class Tracking3DClient {
     return data.Result;
   }
 
+  async updateUnitAttribute(
+    session: Tracking3DSession,
+    uid: string,
+    attributeId: number,
+    value: string
+  ): Promise<void> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId
+    });
+
+    const url =
+      `${this.baseUrl}/Units/${uid}/Attributes/Update?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: JSON.stringify([
+          {
+            AttributeId: attributeId,
+            Value: value
+          }
+        ])
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking Attributes/Update failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+  }
+
   async getLatestPositions(): Promise<any> {
 
     const session =

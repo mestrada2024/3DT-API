@@ -78,3 +78,41 @@ export async function syncUnitsFromTracking3D(
     errors
   };
 }
+
+export interface PlatePushResult {
+  synced: boolean;
+  message?: string;
+}
+
+export async function pushPlateToTracking3D(
+  tracking3d: Tracking3DService,
+  externalId: string,
+  plate: string
+): Promise<PlatePushResult> {
+
+  const session = await tracking3d.authenticate();
+
+  const detail = await tracking3d.getUnitDetail(session, externalId);
+
+  const plateAttribute = detail.AdditionalDetails.Attributes.find(
+    (attribute) => attribute.Name === "Placa"
+  );
+
+  if (!plateAttribute) {
+    return {
+      synced: false,
+      message: "La unidad no tiene el atributo \"Placa\" configurado en 3Dtracking"
+    };
+  }
+
+  await tracking3d.updateUnitAttribute(
+    session,
+    externalId,
+    plateAttribute.AttributeId,
+    plate
+  );
+
+  return {
+    synced: true
+  };
+}

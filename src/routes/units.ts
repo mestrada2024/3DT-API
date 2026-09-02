@@ -1,7 +1,10 @@
 
 import { FastifyInstance } from "fastify";
 
-import { syncUnitsFromTracking3D } from "../services/units-sync.service";
+import {
+  syncUnitsFromTracking3D,
+  pushPlateToTracking3D,
+} from "../services/units-sync.service";
 
 interface UnitParams {
   id: string;
@@ -9,6 +12,10 @@ interface UnitParams {
 
 interface ImeiParams {
   imei: string;
+}
+
+interface UpdatePlateBody {
+  plate?: string | null;
 }
 
 interface UnitQuery {
@@ -259,6 +266,109 @@ export default async function unitsRoutes(
           success: false,
           error: "INTERNAL_SERVER_ERROR",
           message: "Error obteniendo la unidad",
+        });
+      }
+    }
+  );
+
+
+  /**
+   * PATCH /api/v1/units/:id/plate
+   *
+   * Actualiza la placa en la base local y la empuja al atributo
+   * "Placa" de esa unidad en 3Dtracking. :id acepta imei, plate,
+   * externalId o name (igual que GET /:id).
+   */
+  fastify.patch<{
+    Params: UnitParams;
+    Body: UpdatePlateBody;
+  }>(
+    "/:id/plate",
+    {
+      preHandler: [fastify.authenticate],
+    },
+    async (request, reply) => {
+
+      try {
+        const identifier = request.params.id.trim();
+
+        if (!identifier) {
+          return reply.status(400).send({
+            success: false,
+            error: "INVALID_IDENTIFIER",
+            message: "El identificador de la unidad no es válido",
+          });
+        }
+
+        if (request.body?.plate === undefined) {
+          return reply.status(400).send({
+            success: false,
+            error: "INVALID_BODY",
+            message: "El campo plate es requerido",
+          });
+        }
+
+        const plate = request.body.plate?.trim() || null;
+
+        const unit =
+          await fastify.prisma.unit.findFirst({
+            where: {
+              OR: [
+                { imei: identifier },
+                { plate: identifier },
+                { externalId: identifier },
+                { name: identifier },
+              ],
+            },
+          });
+
+        if (!unit) {
+          return reply.status(404).send({
+            success: false,
+            error: "UNIT_NOT_FOUND",
+            message: "Unidad no encontrada",
+          });
+        }
+
+        const updated =
+          await fastify.prisma.unit.update({
+            where: {
+              id: unit.id,
+            },
+            data: {
+              plate,
+            },
+          });
+
+        let tracking3d;
+
+        try {
+          tracking3d = await pushPlateToTracking3D(
+            fastify.tracking3d,
+            unit.externalId,
+            plate || ""
+          );
+        } catch (error) {
+          fastify.log.error(error);
+          tracking3d = {
+            synced: false,
+            message: "No se pudo sincronizar con 3Dtracking",
+          };
+        }
+
+        return reply.send({
+          success: true,
+          data: updated,
+          tracking3d,
+        });
+
+      } catch (error) {
+        fastify.log.error(error);
+
+        return reply.status(500).send({
+          success: false,
+          error: "INTERNAL_SERVER_ERROR",
+          message: "Error actualizando la unidad",
         });
       }
     }

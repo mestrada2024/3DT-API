@@ -35,4 +35,14 @@ export class Tracking3DService {
 
     return this.client.getUnitDetail(session, uid);
   }
+
+  async updateUnitAttribute(
+    session: Tracking3DSession,
+    uid: string,
+    attributeId: number,
+    value: string
+  ) {
+
+    return this.client.updateUnitAttribute(session, uid, attributeId, value);
+  }
 }
