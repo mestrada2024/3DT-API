@@ -2,6 +2,10 @@ import {
   Tracking3DClient
 } from "./tracking.client";
 
+import {
+  Tracking3DSession
+} from "./tracking.types";
+
 export class Tracking3DService {
 
   private readonly client: Tracking3DClient;
@@ -20,5 +24,15 @@ export class Tracking3DService {
   async getLatestPositions() {
 
     return this.client.getLatestPositions();
+  }
+
+  async getUnitsList(session: Tracking3DSession) {
+
+    return this.client.getUnitsList(session);
+  }
+
+  async getUnitDetail(session: Tracking3DSession, uid: string) {
+
+    return this.client.getUnitDetail(session, uid);
   }
 }

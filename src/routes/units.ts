@@ -1,6 +1,8 @@
 
 import { FastifyInstance } from "fastify";
 
+import { syncUnitsFromTracking3D } from "../services/units-sync.service";
+
 interface UnitParams {
   id: string;
 }
@@ -163,9 +165,47 @@ export default async function unitsRoutes(
 
 
   /**
+   * POST /api/v1/units/sync
+   *
+   * Sincroniza todas las unidades desde 3Dtracking hacia la base local
+   * (incluye la placa, leída del atributo "Placa" de cada unidad).
+   */
+  fastify.post(
+    "/sync",
+    {
+      preHandler: [fastify.authenticate],
+    },
+    async (request, reply) => {
+
+      try {
+        const result = await syncUnitsFromTracking3D(
+          fastify.prisma,
+          fastify.tracking3d
+        );
+
+        return reply.send({
+          success: true,
+          data: result,
+        });
+
+      } catch (error) {
+        fastify.log.error(error);
+
+        return reply.status(502).send({
+          success: false,
+          error: "TRACKING3D_SYNC_ERROR",
+          message: "No se pudo sincronizar con 3Dtracking",
+        });
+      }
+    }
+  );
+
+
+  /**
    * GET /api/v1/units/:id
    *
-   * Obtiene una unidad por ID.
+   * Busca una unidad por imei, plate, externalId o name
+   * (coincidencia exacta contra cualquiera de esos campos).
    */
   fastify.get<{
     Params: UnitParams;
@@ -177,20 +217,25 @@ export default async function unitsRoutes(
     async (request, reply) => {
 
       try {
-        const id = Number(request.params.id);
+        const identifier = request.params.id.trim();
 
-        if (!Number.isInteger(id) || id <= 0) {
+        if (!identifier) {
           return reply.status(400).send({
             success: false,
-            error: "INVALID_ID",
-            message: "El ID de la unidad no es válido",
+            error: "INVALID_IDENTIFIER",
+            message: "El identificador de la unidad no es válido",
           });
         }
 
         const unit =
-          await fastify.prisma.unit.findUnique({
+          await fastify.prisma.unit.findFirst({
             where: {
-              id,
+              OR: [
+                { imei: identifier },
+                { plate: identifier },
+                { externalId: identifier },
+                { name: identifier },
+              ],
             },
           });
 
