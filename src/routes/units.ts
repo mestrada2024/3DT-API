@@ -14,6 +14,7 @@ interface UnitQuery {
   limit?: string;
   active?: string;
   search?: string;
+  hasPlate?: string;
 }
 
 export default async function unitsRoutes(
@@ -30,6 +31,7 @@ export default async function unitsRoutes(
    * ?limit=20
    * ?active=true
    * ?search=ABC
+   * ?hasPlate=true
    */
   fastify.get<{
     Querystring: UnitQuery;
@@ -58,6 +60,9 @@ export default async function unitsRoutes(
 
         const where: {
           active?: boolean;
+          plate?: {
+            not: null;
+          };
           OR?: Array<{
             name?: {
               contains: string;
@@ -77,6 +82,15 @@ export default async function unitsRoutes(
         if (request.query.active !== undefined) {
           where.active =
             request.query.active === "true";
+        }
+
+        /**
+         * Filtrar por unidades que tienen placa asignada
+         */
+        if (request.query.hasPlate === "true") {
+          where.plate = {
+            not: null,
+          };
         }
 
         /**
@@ -232,7 +246,7 @@ export default async function unitsRoutes(
         }
 
         const unit =
-          await fastify.prisma.unit.findUnique({
+          await fastify.prisma.unit.findFirst({
             where: {
               imei,
             },

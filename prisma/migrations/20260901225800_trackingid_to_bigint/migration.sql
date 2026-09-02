@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `Unit` MODIFY COLUMN `trackingId` BIGINT NOT NULL;

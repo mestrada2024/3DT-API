@@ -3,7 +3,9 @@ import {
 } from "./tracking.auth";
 
 import {
-  Tracking3DSession
+  Tracking3DSession,
+  Tracking3DUnitListItem,
+  Tracking3DUnitDetail
 } from "./tracking.types";
 
 export class Tracking3DClient {
@@ -29,6 +31,77 @@ export class Tracking3DClient {
   async authenticate(): Promise<Tracking3DSession> {
 
     return this.auth.authenticate();
+  }
+
+  async getUnitsList(
+    session: Tracking3DSession
+  ): Promise<Tracking3DUnitListItem[]> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId
+    });
+
+    const url =
+      `${this.baseUrl}/Units/List?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking Units/List failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    return data.Result;
+  }
+
+  async getUnitDetail(
+    session: Tracking3DSession,
+    uid: string
+  ): Promise<Tracking3DUnitDetail> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId
+    });
+
+    const url =
+      `${this.baseUrl}/Units/${uid}?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking Units/{Uid} failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    return data.Result;
   }
 
   async getLatestPositions(): Promise<any> {

@@ -1,5 +1,10 @@
 import Fastify from "fastify";
 
+(BigInt.prototype as unknown as { toJSON: () => string }).toJSON =
+  function (this: bigint) {
+    return this.toString();
+  };
+
 import helmet
   from "@fastify/helmet";
 
