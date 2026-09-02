@@ -45,4 +45,9 @@ export class Tracking3DService {
 
     return this.client.updateUnitAttribute(session, uid, attributeId, value);
   }
+
+  async getSimList(session: Tracking3DSession) {
+
+    return this.client.getSimList(session);
+  }
 }

@@ -123,6 +123,62 @@ const trackingRoutes:
       }
     );
 
+    /**
+     * Listar SIMs
+     *
+     * GET
+     * /api/v1/tracking/sims
+     */
+    app.get(
+      "/sims",
+      {
+        preHandler: async (request) => {
+
+          await request.jwtVerify();
+
+        }
+      },
+      async (request, reply) => {
+
+        try {
+
+          const session =
+            await app.tracking3d.authenticate();
+
+          const sims =
+            await app.tracking3d.getSimList(session);
+
+          return {
+
+            success: true,
+
+            data: sims
+
+          };
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          return reply
+            .code(502)
+            .send({
+
+              success: false,
+
+              error:
+                "TRACKING3D_ERROR",
+
+              message:
+                "Unable to obtain SIM cards from 3Dtracking"
+
+            });
+
+        }
+
+      }
+    );
+
   };
 
 export default trackingRoutes;

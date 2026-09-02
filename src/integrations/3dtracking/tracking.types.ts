@@ -76,3 +76,13 @@ export interface Tracking3DUnitDetail {
     Attributes: Tracking3DAttribute[];
   };
 }
+
+export interface Tracking3DSimCard {
+  Uid: string;
+  PhoneNumber: string;
+  PIN: string;
+  PUK: string;
+  ICCID: string;
+  TrackerUid: string;
+  CreatedDateTimeUtc: string;
+}

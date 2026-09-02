@@ -46,6 +46,8 @@ export async function syncUnitsFromTracking3D(
           trackingId: BigInt(detail.IMEI),
           imei: detail.IMEI,
           name: detail.Name,
+          companyUid: detail.CompanyUid || null,
+          companyName: detail.CompanyName || null,
           plate: plateAttribute?.Value || null,
           status: detail.Status || "unknown"
         },
@@ -53,6 +55,8 @@ export async function syncUnitsFromTracking3D(
           trackingId: BigInt(detail.IMEI),
           imei: detail.IMEI,
           name: detail.Name,
+          companyUid: detail.CompanyUid || null,
+          companyName: detail.CompanyName || null,
           plate: plateAttribute?.Value || null,
           status: detail.Status || "unknown"
         }

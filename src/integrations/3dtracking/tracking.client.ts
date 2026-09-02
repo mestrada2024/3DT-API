@@ -5,7 +5,8 @@ import {
 import {
   Tracking3DSession,
   Tracking3DUnitListItem,
-  Tracking3DUnitDetail
+  Tracking3DUnitDetail,
+  Tracking3DSimCard
 } from "./tracking.types";
 
 export class Tracking3DClient {
@@ -96,6 +97,41 @@ export class Tracking3DClient {
 
       throw new Error(
         `3Dtracking Units/{Uid} failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    return data.Result;
+  }
+
+  async getSimList(
+    session: Tracking3DSession
+  ): Promise<Tracking3DSimCard[]> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId
+    });
+
+    const url =
+      `${this.baseUrl}/Devices/Sim/List?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking Devices/Sim/List failed: HTTP ${response.status} - ${responseText}`
       );
     }
 

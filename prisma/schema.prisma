@@ -24,6 +24,8 @@ model Unit {
   active         Boolean    @default(true)
   externalId     String     @unique
   name           String
+  companyUid     String?
+  companyName    String?
   registration   String?
   status         String     @default("unknown")
   latitude       Decimal?   @db.Decimal(10, 7)
