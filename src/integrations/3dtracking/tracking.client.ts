@@ -6,7 +6,8 @@ import {
   Tracking3DSession,
   Tracking3DUnitListItem,
   Tracking3DUnitDetail,
-  Tracking3DSimCard
+  Tracking3DSimCard,
+  Tracking3DCreateSimPayload
 } from "./tracking.types";
 
 export class Tracking3DClient {
@@ -138,6 +139,119 @@ export class Tracking3DClient {
     const data = JSON.parse(responseText);
 
     return data.Result;
+  }
+
+  async createSim(
+    session: Tracking3DSession,
+    payload: Tracking3DCreateSimPayload
+  ): Promise<Tracking3DSimCard> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId,
+      PhoneNumber: payload.PhoneNumber || "",
+      Pin: payload.PIN || "",
+      PUK: payload.PUK || "",
+      ICCID: payload.ICCID
+    });
+
+    const url =
+      `${this.baseUrl}/devices/sim/create?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking devices/sim/create failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    return data.Result;
+  }
+
+  async updateSim(
+    session: Tracking3DSession,
+    uid: string,
+    payload: Tracking3DCreateSimPayload
+  ): Promise<Tracking3DSimCard> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId,
+      PhoneNumber: payload.PhoneNumber || "",
+      Pin: payload.PIN || "",
+      PUK: payload.PUK || "",
+      ICCID: payload.ICCID
+    });
+
+    const url =
+      `${this.baseUrl}/devices/sim/${uid}/update?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking devices/sim/{Uid}/update failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    return data.Result;
+  }
+
+  async deleteSim(
+    session: Tracking3DSession,
+    uid: string
+  ): Promise<void> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId
+    });
+
+    const url =
+      `${this.baseUrl}/devices/sim/${uid}/delete?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking devices/sim/{Uid}/delete failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
   }
 
   async updateUnitAttribute(

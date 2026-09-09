@@ -52,3 +52,19 @@ model Position {
   @@index([recordedAt])
   @@index([unitId, recordedAt])
 }
+
+model Sim {
+  id          Int       @id @default(autoincrement())
+  iccid       String    @unique
+  phoneNumber String?
+  pin         String?
+  puk         String?
+  trackerUid  String?
+  externalId  String?   @unique
+  syncStatus  String    @default("pending")
+  syncError   String?
+  syncedAt    DateTime?
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}

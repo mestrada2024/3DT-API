@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE `Sim` ADD COLUMN `active` BOOLEAN NOT NULL DEFAULT true;

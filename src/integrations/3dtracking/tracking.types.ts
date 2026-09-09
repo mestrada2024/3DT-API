@@ -86,3 +86,10 @@ export interface Tracking3DSimCard {
   TrackerUid: string;
   CreatedDateTimeUtc: string;
 }
+
+export interface Tracking3DCreateSimPayload {
+  ICCID: string;
+  PhoneNumber?: string;
+  PIN?: string;
+  PUK?: string;
+}
