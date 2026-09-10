@@ -56,7 +56,7 @@ model Position {
 model Sim {
   id          Int       @id @default(autoincrement())
   iccid       String    @unique
-  phoneNumber String?
+  phoneNumber String?   @unique
   pin         String?
   puk         String?
   trackerUid  String?
@@ -67,4 +67,35 @@ model Sim {
   active      Boolean   @default(true)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  username  String?
+  module    String
+  action    String
+  resource  String?
+  success   Boolean
+  message   String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([module, action])
+  @@index([createdAt])
+}
+
+model Tracker {
+  id                 Int       @id @default(autoincrement())
+  uid                String    @unique
+  name               String?
+  imei               String?
+  trackerTypeUid     String?
+  trackerTypeName    String?
+  unitModelUid       String?
+  unitModelName      String?
+  simUid             String?
+  activationCode     String?
+  createdDateTimeUtc DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 }

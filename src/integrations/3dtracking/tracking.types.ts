@@ -93,3 +93,16 @@ export interface Tracking3DCreateSimPayload {
   PIN?: string;
   PUK?: string;
 }
+
+export interface Tracking3DTracker {
+  Uid: string;
+  Name: string;
+  IMEI: string;
+  TrackerTypeUid: string;
+  TrackerTypeName: string;
+  UnitModelUid: string;
+  UnitModelName: string;
+  SimUid: string;
+  ActivationCode: string | null;
+  CreatedDateTimeUtc: string;
+}

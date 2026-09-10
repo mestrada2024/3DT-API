@@ -7,7 +7,8 @@ import {
   Tracking3DUnitListItem,
   Tracking3DUnitDetail,
   Tracking3DSimCard,
-  Tracking3DCreateSimPayload
+  Tracking3DCreateSimPayload,
+  Tracking3DTracker
 } from "./tracking.types";
 
 export class Tracking3DClient {
@@ -138,7 +139,42 @@ export class Tracking3DClient {
 
     const data = JSON.parse(responseText);
 
-    return data.Result;
+    return data.Result || [];
+  }
+
+  async getTrackerList(
+    session: Tracking3DSession
+  ): Promise<Tracking3DTracker[]> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId
+    });
+
+    const url =
+      `${this.baseUrl}/devices/tracker/list?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking devices/tracker/list failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    return data.Result || [];
   }
 
   async createSim(
@@ -177,6 +213,13 @@ export class Tracking3DClient {
     }
 
     const data = JSON.parse(responseText);
+
+    if (!data.Result) {
+
+      throw new Error(
+        `3Dtracking devices/sim/create no devolvió un SIM válido: ${responseText}`
+      );
+    }
 
     return data.Result;
   }
@@ -218,6 +261,13 @@ export class Tracking3DClient {
     }
 
     const data = JSON.parse(responseText);
+
+    if (!data.Result) {
+
+      throw new Error(
+        `3Dtracking devices/sim/{Uid}/update no devolvió un SIM válido: ${responseText}`
+      );
+    }
 
     return data.Result;
   }

@@ -7,8 +7,15 @@ import {
   importSimsAndReplicate,
   updateSimAndReplicate,
   deleteSimAndReplicate,
-  SimCreateInput
+  SimCreateInput,
+  SimValidationError,
+  SimDuplicateError
 } from "../services/sims-sync.service";
+
+import {
+  logAction,
+  getActorFromRequest
+} from "../services/audit-log.service";
 
 interface CreateSimBody {
   iccid?: string;
@@ -455,10 +462,12 @@ const trackingRoutes:
     /**
      * Crear un SIM individual
      *
-     * Se guarda primero en la base local y luego se replica en
+     * Antes de escribir nada, valida (local + consulta en vivo a
+     * 3Dtracking) que iccid/phoneNumber no estén ya en uso. Si pasa la
+     * validación, se guarda en la base local y luego se replica en
      * 3Dtracking. Si la replicación falla, el SIM queda creado
-     * localmente con syncStatus "error" (ver campo tracking3d en
-     * la respuesta).
+     * localmente con syncStatus "error" (ver campo tracking3d en la
+     * respuesta). Registra en el log de auditoría quién lo ejecutó.
      *
      * POST
      * /api/v1/tracking/sims
@@ -496,14 +505,27 @@ const trackingRoutes:
 
         }
 
+        const actor = getActorFromRequest(request);
+
         try {
 
-          const { sim, replication } =
+          const { sim, replication, revived } =
             await createSimAndReplicate(
               app.prisma,
               app.tracking3d,
               { ...request.body, iccid }
             );
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "sims",
+            action: revived ? "create-revive" : "create",
+            resource: iccid,
+            success: true,
+            message: replication.synced
+              ? undefined
+              : `${revived ? "Reactivado" : "Creado"} local; falló replicación en 3Dtracking: ${replication.message}`
+          });
 
           return reply
             .code(201)
@@ -513,13 +535,24 @@ const trackingRoutes:
 
               data: sim,
 
+              revived,
+
               tracking3d: replication
 
             });
 
         } catch (error: any) {
 
-          if (error?.code === "P2002") {
+          if (error instanceof SimDuplicateError) {
+
+            await logAction(app.prisma, {
+              ...actor,
+              module: "sims",
+              action: "create",
+              resource: iccid,
+              success: false,
+              message: error.message
+            });
 
             return reply
               .code(409)
@@ -530,14 +563,52 @@ const trackingRoutes:
                 error:
                   "SIM_ALREADY_EXISTS",
 
-                message:
-                  "Ya existe un SIM con ese ICCID"
+                field: error.field,
+
+                source: error.source,
+
+                message: error.message
+
+              });
+
+          }
+
+          if (error instanceof SimValidationError || error?.code === "P2002") {
+
+            await logAction(app.prisma, {
+              ...actor,
+              module: "sims",
+              action: "create",
+              resource: iccid,
+              success: false,
+              message: error.message
+            });
+
+            return reply
+              .code(error?.code === "P2002" ? 409 : 400)
+              .send({
+
+                success: false,
+
+                error:
+                  error?.code === "P2002" ? "SIM_ALREADY_EXISTS" : "INVALID_BODY",
+
+                message: error.message
 
               });
 
           }
 
           app.log.error(error);
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "sims",
+            action: "create",
+            resource: iccid,
+            success: false,
+            message: error instanceof Error ? error.message : "Error desconocido"
+          });
 
           return reply
             .code(500)
@@ -561,10 +632,13 @@ const trackingRoutes:
     /**
      * Importar SIMs de forma masiva
      *
-     * Cada registro se guarda primero en la base local y luego se
-     * replica en 3Dtracking de forma independiente: un fallo en un
-     * registro no detiene el resto del lote (ver detalle por item
-     * en la respuesta).
+     * Antes de crear, se autentica y consulta una sola vez la lista de
+     * 3Dtracking para validar duplicados de todo el lote. Cada
+     * registro se guarda primero en la base local y luego se replica
+     * en 3Dtracking de forma independiente: un fallo en un registro no
+     * detiene el resto (ver detalle por item en la respuesta). Registra
+     * un log de auditoría por lote (quién lo ejecutó, cuántos se
+     * crearon).
      *
      * POST
      * /api/v1/tracking/sims/import
@@ -620,6 +694,8 @@ const trackingRoutes:
 
         }
 
+        const actor = getActorFromRequest(request);
+
         try {
 
           const result =
@@ -628,6 +704,17 @@ const trackingRoutes:
               app.tracking3d,
               sims as SimCreateInput[]
             );
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "sims",
+            action: "import",
+            resource: `${result.created}/${result.total} creados`,
+            success: result.errors === 0,
+            message: result.errors > 0
+              ? `${result.errors} de ${result.total} registros fallaron`
+              : undefined
+          });
 
           return reply.send({
 
@@ -641,17 +728,28 @@ const trackingRoutes:
 
           app.log.error(error);
 
+          const message = error instanceof Error ? error.message : "Error desconocido";
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "sims",
+            action: "import",
+            resource: `0/${sims.length} creados`,
+            success: false,
+            message
+          });
+
           return reply
-            .code(500)
+            .code(502)
             .send({
 
               success: false,
 
               error:
-                "INTERNAL_SERVER_ERROR",
+                "TRACKING3D_ERROR",
 
               message:
-                "Error importando los SIMs"
+                `No se pudo consultar 3Dtracking para validar el lote: ${message}`
 
             });
 
@@ -663,10 +761,13 @@ const trackingRoutes:
     /**
      * Actualizar un SIM
      *
-     * Actualiza phoneNumber/pin/puk/trackerUid en la base local y,
-     * si el SIM ya tiene externalId (fue creado en 3Dtracking),
+     * Antes de escribir, valida (local + consulta en vivo a
+     * 3Dtracking) que el phoneNumber nuevo no esté ya en uso por otro
+     * SIM. Actualiza phoneNumber/pin/puk/trackerUid en la base local
+     * y, si el SIM ya tiene externalId (fue creado en 3Dtracking),
      * replica el cambio con devices/sim/{Uid}/update. :id acepta
-     * iccid o externalId.
+     * iccid o externalId. Registra en el log de auditoría quién lo
+     * ejecutó.
      *
      * PATCH
      * /api/v1/tracking/sims/:id
@@ -705,6 +806,8 @@ const trackingRoutes:
 
         }
 
+        const actor = getActorFromRequest(request);
+
         try {
 
           const result =
@@ -733,6 +836,17 @@ const trackingRoutes:
 
           }
 
+          await logAction(app.prisma, {
+            ...actor,
+            module: "sims",
+            action: "update",
+            resource: identifier,
+            success: true,
+            message: result.replication.synced
+              ? undefined
+              : `Actualizado local; falló replicación en 3Dtracking: ${result.replication.message}`
+          });
+
           return reply.send({
 
             success: true,
@@ -743,9 +857,48 @@ const trackingRoutes:
 
           });
 
-        } catch (error) {
+        } catch (error: any) {
+
+          if (error instanceof SimDuplicateError) {
+
+            await logAction(app.prisma, {
+              ...actor,
+              module: "sims",
+              action: "update",
+              resource: identifier,
+              success: false,
+              message: error.message
+            });
+
+            return reply
+              .code(409)
+              .send({
+
+                success: false,
+
+                error:
+                  "SIM_ALREADY_EXISTS",
+
+                field: error.field,
+
+                source: error.source,
+
+                message: error.message
+
+              });
+
+          }
 
           app.log.error(error);
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "sims",
+            action: "update",
+            resource: identifier,
+            success: false,
+            message: error instanceof Error ? error.message : "Error desconocido"
+          });
 
           return reply
             .code(500)
@@ -772,7 +925,7 @@ const trackingRoutes:
      * Marca el SIM como inactivo (active: false) en la base local y,
      * si ya tenía externalId (fue creado en 3Dtracking), lo elimina
      * allá con devices/sim/{Uid}/delete. :id acepta iccid o
-     * externalId.
+     * externalId. Registra en el log de auditoría quién lo ejecutó.
      *
      * DELETE
      * /api/v1/tracking/sims/:id
@@ -810,6 +963,8 @@ const trackingRoutes:
 
         }
 
+        const actor = getActorFromRequest(request);
+
         try {
 
           const result =
@@ -837,6 +992,17 @@ const trackingRoutes:
 
           }
 
+          await logAction(app.prisma, {
+            ...actor,
+            module: "sims",
+            action: "delete",
+            resource: identifier,
+            success: true,
+            message: result.replication.synced
+              ? undefined
+              : `Borrado local; no replicado en 3Dtracking: ${result.replication.message}`
+          });
+
           return reply.send({
 
             success: true,
@@ -850,6 +1016,15 @@ const trackingRoutes:
         } catch (error) {
 
           app.log.error(error);
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "sims",
+            action: "delete",
+            resource: identifier,
+            success: false,
+            message: error instanceof Error ? error.message : "Error desconocido"
+          });
 
           return reply
             .code(500)

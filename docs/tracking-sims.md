@@ -1,10 +1,22 @@
 # SIMs — creación individual y por lote
 
-Endpoints para dar de alta SIMs: se guardan primero en la tabla local
-`Sim` y, acto seguido, se replican en 3Dtracking (`POST
-devices/sim/create`). Un fallo al replicar en 3Dtracking **no** revierte
-el registro local: queda guardado con `syncStatus: "error"` y el detalle
-del fallo en `syncError`, para reintentar después.
+Endpoints para dar de alta, actualizar, eliminar y consultar SIMs.
+`iccid` y `phoneNumber` son únicos: antes de crear o actualizar un SIM,
+se valida que ninguno de los dos esté ya en uso — tanto en la base
+local como **en vivo contra 3Dtracking** (se consulta `Devices/Sim/List`
+antes de insertar/actualizar). Si esa consulta a 3Dtracking falla, la
+operación se rechaza (no se escribe nada, ni local ni remoto): no se
+puede garantizar que no haya duplicado.
+
+Una vez pasada la validación, se guarda primero en la tabla local `Sim`
+y, acto seguido, se replica en 3Dtracking (`POST devices/sim/create` /
+`update` / `delete`, según la acción). Un fallo al *replicar* (ya
+pasada la validación de duplicados) **no** revierte el registro local:
+queda guardado con `syncStatus: "error"` y el detalle del fallo en
+`syncError`, para reintentar después.
+
+Toda operación de escritura (`POST`/`PATCH`/`DELETE`) queda registrada
+en el log de auditoría — ver [Auditoría](#auditoría) más abajo.
 
 Todos los endpoints requieren autenticación:
 
@@ -73,8 +85,8 @@ Crea un SIM individual.
 
 | Campo         | Tipo   | Requerido | Notas                                                |
 |---------------|--------|-----------|-------------------------------------------------------|
-| `iccid`       | string | Sí        | Identificador único del SIM (no se admite duplicado). |
-| `phoneNumber` | string | No        |                                                         |
+| `iccid`       | string | Sí        | Único (local y en 3Dtracking; se valida antes de insertar). |
+| `phoneNumber` | string | No        | Único si se envía (misma validación que `iccid`).      |
 | `pin`         | string | No        |                                                         |
 | `puk`         | string | No        |                                                         |
 | `trackerUid`  | string | No        | Solo se guarda local. 3Dtracking no lo acepta al crear un SIM (ver "Integración con 3Dtracking" abajo). |
@@ -132,17 +144,22 @@ pendiente de reintento; el registro local no se pierde):
 | Código | Error                  | Motivo                                   |
 |--------|-------------------------|-------------------------------------------|
 | 400    | `INVALID_BODY`          | Falta `iccid`.                            |
-| 409    | `SIM_ALREADY_EXISTS`    | Ya existe un SIM local con ese `iccid`.   |
-| 500    | `INTERNAL_SERVER_ERROR` | Error inesperado guardando en local.      |
+| 409    | `SIM_ALREADY_EXISTS`    | Ya existe un SIM (local o en 3Dtracking) con ese `iccid` o `phoneNumber`. La respuesta incluye `field` (`"iccid"` \| `"phoneNumber"`) y `source` (`"local"` \| `"3dtracking"`). |
+| 500    | `INTERNAL_SERVER_ERROR` | Error inesperado (incluye no poder consultar 3Dtracking para validar duplicados). |
 
 ---
 
 ## POST /api/v1/tracking/sims/import
 
-Carga masiva. Mismo flujo que la creación individual (guardar local →
-replicar en 3Dtracking), aplicado a cada elemento del arreglo de forma
-independiente: si un registro falla (duplicado, error de 3Dtracking,
-etc.), no detiene el resto del lote.
+Carga masiva. Antes de procesar el lote, se autentica y consulta la
+lista de SIMs de 3Dtracking **una sola vez** (no por registro), y esa
+lista se va ampliando con cada SIM creado exitosamente — así también
+se detectan duplicados dentro del propio lote (dos filas con el mismo
+`iccid`, por ejemplo). Si esa consulta inicial a 3Dtracking falla,
+se rechaza el lote completo (`502`, nada se guarda). Ya validado,
+cada elemento sigue el mismo flujo que la creación individual (guardar
+local → replicar en 3Dtracking) de forma independiente: si un registro
+falla (duplicado, error de 3Dtracking, etc.), no detiene el resto.
 
 ### Body
 
@@ -191,17 +208,19 @@ curl -s -X POST http://localhost:3010/api/v1/tracking/sims/import \
   se replicó en 3Dtracking (`synced`), con `message` cuando algo falló.
 
 | Código | Error           | Motivo                                              |
-|--------|------------------|-------------------------------------------------------|
+|--------|------------------|--------------------------------------------------------|
 | 400    | `INVALID_BODY`   | `sims` falta, no es arreglo o está vacío.             |
 | 400    | `TOO_MANY_SIMS`  | Más de 500 elementos en el arreglo.                   |
-| 500    | `INTERNAL_SERVER_ERROR` | Error inesperado procesando el lote.           |
+| 502    | `TRACKING3D_ERROR` | No se pudo consultar 3Dtracking para validar el lote (nada se guardó). |
 
 ---
 
 ## PATCH /api/v1/tracking/sims/:id
 
-Actualiza un SIM. `:id` acepta `iccid` o `externalId`. Si el SIM ya
-tiene `externalId` (fue creado en 3Dtracking), replica el cambio con
+Actualiza un SIM. `:id` acepta `iccid` o `externalId`. Antes de
+escribir, valida (local + consulta en vivo a 3Dtracking) que el
+`phoneNumber` nuevo no esté en uso por otro SIM. Si el SIM ya tiene
+`externalId` (fue creado en 3Dtracking), replica el cambio con
 `devices/sim/{Uid}/update`; si todavía no lo tiene, solo actualiza local
 y lo reporta en `tracking3d.message`.
 
@@ -239,6 +258,7 @@ curl -s -X PATCH http://localhost:3010/api/v1/tracking/sims/8952140012345678901 
 |--------|------------------|--------------------------------------------|
 | 400    | `INVALID_IDENTIFIER` | `:id` vacío.                           |
 | 404    | `SIM_NOT_FOUND`  | No existe (o está borrado lógicamente).    |
+| 409    | `SIM_ALREADY_EXISTS` | El `phoneNumber` nuevo ya está en uso (local o 3Dtracking) — incluye `field`/`source`. |
 | 500    | `INTERNAL_SERVER_ERROR` | Error inesperado.                  |
 
 ---
@@ -275,8 +295,15 @@ curl -s -X DELETE http://localhost:3010/api/v1/tracking/sims/8952140012345678901
 | 500    | `INTERNAL_SERVER_ERROR` | Error inesperado.                  |
 
 Un SIM borrado (`active: false`) deja de poder actualizarse (`PATCH`
-responde 404), pero su `iccid` sigue ocupado: no se puede volver a
-crear un SIM con el mismo `iccid` mientras el registro exista.
+responde 404). Su `iccid` **no** queda bloqueado para siempre: si
+vuelves a hacer `POST /sims` con ese mismo `iccid`, en vez de crear una
+fila nueva se **reactiva** la existente (mismo `id`, se actualizan los
+demás campos con los nuevos valores, `active` vuelve a `true` y se
+vuelve a intentar crear en 3Dtracking desde cero). La respuesta trae
+`"revived": true` en ese caso. Si el `phoneNumber` que se envía
+pertenece a otra fila que sigue activa, sí bloquea (`409`) — la
+reactivación solo libera el `iccid`/`phoneNumber` que pertenecían a esa
+misma fila borrada.
 
 ---
 
@@ -335,3 +362,35 @@ Implementado en `Tracking3DClient.deleteSim`.
 | `syncedAt`    | Fecha del último éxito replicando en 3Dtracking (crear, actualizar o eliminar). |
 | `active`      | `false` tras un `DELETE` (borrado lógico); `PATCH`/`DELETE` solo encuentran SIMs con `active: true`. |
 
+
+---
+
+## Auditoría
+
+Toda operación que inserta, actualiza o elimina información en
+3Dtracking (no solo SIMs — también `PATCH /api/v1/units/:id/plate`)
+queda registrada en la tabla `AuditLog`: quién la ejecutó (`userId` /
+`username`, tomados del JWT), en qué módulo/acción, sobre qué recurso,
+si tuvo éxito, y un mensaje si algo falló.
+
+| Campo       | Notas                                                    |
+|-------------|-------------------------------------------------------------|
+| `userId`    | `sub` del JWT (id del usuario).                             |
+| `username`  | `username` del JWT.                                         |
+| `module`    | `"sims"` \| `"units"`.                                      |
+| `action`    | `"create"` \| `"update"` \| `"delete"` \| `"import"` \| `"update-plate"`. |
+| `resource`  | Identificador afectado (iccid, id de unidad, o `"N/M creados"` en `import`). |
+| `success`   | Si la operación (incluida la replicación en 3Dtracking) tuvo éxito. |
+| `message`   | Detalle del error, si `success` es `false`.                  |
+
+No hay todavía un endpoint para consultarlo (solo vía DB directa):
+
+```sql
+SELECT * FROM AuditLog ORDER BY createdAt DESC LIMIT 50;
+```
+
+**Patrón para endpoints nuevos que escriban en 3Dtracking:** llamar
+`logAction()` (en `src/services/audit-log.service.ts`) justo después de
+intentar la operación, tanto en éxito como en error, usando
+`getActorFromRequest(request)` para obtener el actor. Ver los handlers
+de `src/routes/tracking3d.ts` como referencia.

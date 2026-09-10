@@ -52,6 +52,11 @@ export class Tracking3DService {
     return this.client.getSimList(session);
   }
 
+  async getTrackerList(session: Tracking3DSession) {
+
+    return this.client.getTrackerList(session);
+  }
+
   async createSim(
     session: Tracking3DSession,
     payload: Tracking3DCreateSimPayload

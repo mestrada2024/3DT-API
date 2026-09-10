@@ -6,6 +6,11 @@ import {
   pushPlateToTracking3D,
 } from "../services/units-sync.service";
 
+import {
+  logAction,
+  getActorFromRequest,
+} from "../services/audit-log.service";
+
 interface UnitParams {
   id: string;
 }
@@ -355,6 +360,17 @@ export default async function unitsRoutes(
             message: "No se pudo sincronizar con 3Dtracking",
           };
         }
+
+        await logAction(fastify.prisma, {
+          ...getActorFromRequest(request),
+          module: "units",
+          action: "update-plate",
+          resource: identifier,
+          success: tracking3d.synced,
+          message: tracking3d.synced
+            ? undefined
+            : `Placa actualizada local; falló replicación en 3Dtracking: ${tracking3d.message}`,
+        });
 
         return reply.send({
           success: true,
