@@ -18,7 +18,7 @@ model User {
 
 model Unit {
   id             Int        @id @default(autoincrement())
-  trackingId     BigInt     @unique
+  trackingId     BigInt?    @unique
   imei           String?
   plate          String?
   active         Boolean    @default(true)
@@ -28,6 +28,7 @@ model Unit {
   companyName    String?
   registration   String?
   status         String     @default("unknown")
+  trackerUid     String?
   latitude       Decimal?   @db.Decimal(10, 7)
   longitude      Decimal?   @db.Decimal(10, 7)
   speed          Decimal?   @db.Decimal(10, 2)
@@ -97,6 +98,7 @@ model Tracker {
   unitModelUid       String?
   unitModelName      String?
   simUid             String?
+  unitUid            String?
   activationCode     String?
   createdDateTimeUtc DateTime?
   syncStatus         String    @default("synced")

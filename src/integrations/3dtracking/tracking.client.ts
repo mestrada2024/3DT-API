@@ -11,7 +11,9 @@ import {
   Tracking3DTracker,
   Tracking3DTrackerDetail,
   Tracking3DCreateTrackerPayload,
-  Tracking3DUpdateTrackerPayload
+  Tracking3DUpdateTrackerPayload,
+  Tracking3DCompany,
+  Tracking3DCreateUnitPayload
 } from "./tracking.types";
 
 export class Tracking3DClient {
@@ -72,6 +74,177 @@ export class Tracking3DClient {
     const data = JSON.parse(responseText);
 
     return data.Result;
+  }
+
+  async getCompanyList(
+    session: Tracking3DSession
+  ): Promise<Tracking3DCompany[]> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId
+    });
+
+    const url =
+      `${this.baseUrl}/company/list?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking company/list failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    return data.Result || [];
+  }
+
+  async createUnit(
+    session: Tracking3DSession,
+    companyUid: string,
+    payload: Tracking3DCreateUnitPayload
+  ): Promise<Tracking3DUnitDetail> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId,
+      Name: payload.Name,
+      GroupName: payload.GroupName || "",
+      UnitFunction: payload.UnitFunction || "",
+      TrackerUid: payload.TrackerUid || ""
+    });
+
+    const url =
+      `${this.baseUrl}/company/${companyUid}/unitcreate?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking company/{Uid}/unitcreate failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    if (!data.Result || !data.Result.Uid) {
+
+      throw new Error(
+        `3Dtracking company/{Uid}/unitcreate no devolvió una unidad válida: ${responseText}`
+      );
+    }
+
+    return data.Result;
+  }
+
+  async assignTrackerToUnit(
+    session: Tracking3DSession,
+    unitUid: string,
+    trackerUid: string
+  ): Promise<void> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId,
+      UnitUid: unitUid,
+      TrackerUid: trackerUid
+    });
+
+    const url =
+      `${this.baseUrl}/units/assigntracker?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking units/assigntracker failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    if (data.Result !== true) {
+
+      throw new Error(
+        `3Dtracking units/assigntracker failed: ${responseText}`
+      );
+    }
+  }
+
+  async unassignTrackerFromUnit(
+    session: Tracking3DSession,
+    unitUid: string,
+    trackerUid: string
+  ): Promise<void> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId,
+      UnitUid: unitUid,
+      TrackerUid: trackerUid
+    });
+
+    const url =
+      `${this.baseUrl}/units/unassigntracker?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking units/unassigntracker failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    if (data.Result !== true) {
+
+      throw new Error(
+        `3Dtracking units/unassigntracker failed: ${responseText}`
+      );
+    }
   }
 
   async getUnitDetail(

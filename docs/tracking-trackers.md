@@ -144,10 +144,12 @@ curl -s -X DELETE http://localhost:3010/api/v1/tracking/trackers/F1DEF6 \
 
 Un tracker borrado (`active: false`) deja de encontrarse por
 `GET/PATCH/DELETE .../trackers/:id` (salvo `GET .../trackers/local?active=false`,
-que sí los lista). A diferencia de SIMs, **no** hay reactivación automática
-al volver a crear el mismo `imei` — `POST /trackers` seguirá bloqueando con
-`409` mientras el registro borrado exista. Avisar si se necesita ese mismo
-comportamiento aquí.
+que sí los lista). Su `imei` **no** queda bloqueado para siempre: igual que
+con SIMs, si vuelves a hacer `POST /trackers` con ese mismo `imei`, en vez
+de crear una fila nueva se **reactiva** la existente (mismo `id`, campos
+actualizados con los nuevos valores, `active` vuelve a `true` y se
+reintenta crear en 3Dtracking desde cero — nuevo `uid`, ya que el anterior
+quedó eliminado allá). La respuesta trae `"revived": true` en ese caso.
 
 ---
 

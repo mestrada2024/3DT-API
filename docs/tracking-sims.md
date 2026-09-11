@@ -412,7 +412,7 @@ si tuvo éxito, y un mensaje si algo falló.
 | `userId`      | `sub` del JWT (id del usuario).                             |
 | `username`    | `username` del JWT.                                         |
 | `module`      | `"sims"` \| `"units"` \| `"trackers"`.                     |
-| `action`      | `"create"` \| `"create-revive"` \| `"update"` \| `"delete"` \| `"import"` \| `"update-plate"`. |
+| `action`      | `"create"` \| `"create-revive"` \| `"update"` \| `"delete"` \| `"import"` \| `"update-plate"` \| `"assign-sim"` \| `"deallocate-sim"`. |
 | `resource`    | Identificador afectado (iccid/imei/uid, id de unidad, o `"N/M creados"` en `import`). |
 | `success`     | Si la operación (incluida la replicación en 3Dtracking) tuvo éxito. |
 | `message`     | Detalle del error, si `success` es `false`.                  |

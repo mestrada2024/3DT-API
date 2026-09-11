@@ -150,3 +150,27 @@ export interface Tracking3DUpdateTrackerPayload {
   IMEI?: string;
   SimUid?: string;
 }
+
+export interface Tracking3DCompany {
+  Uid: string;
+  Name: string;
+  Status: string | null;
+  ServiceType: string | null;
+  Country: string | null;
+  Currency: string | null;
+  Language: string | null;
+  TimeZone: string | null;
+  ContactEmail: string | null;
+  ContactPhone: string | null;
+  ContactPosition: string | null;
+  ContactName: string | null;
+  Notes: string | null;
+  CreatedDateTimeUtc: string | null;
+}
+
+export interface Tracking3DCreateUnitPayload {
+  Name: string;
+  GroupName?: string;
+  UnitFunction?: "Personal" | "AssetItem" | "Vehicle" | string;
+  TrackerUid?: string;
+}

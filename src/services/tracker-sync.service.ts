@@ -162,9 +162,39 @@ async function replicateTrackerToTracking3D(
 }
 
 /**
+ * Busca conflictos locales de imei para una creación. Si el único
+ * match es por imei y ese registro está borrado (syncStatus
+ * "deleted"), no es un conflicto real: se devuelve como
+ * `reviveTarget`, para reactivar (UPDATE) esa fila en vez de bloquear
+ * o insertar una nueva (mismo criterio que Sim, ver
+ * checkLocalSimForCreate en sims-sync.service.ts).
+ */
+async function checkLocalTrackerForCreate(
+  prisma: PrismaClient,
+  imei: string
+): Promise<{ conflict: Tracker | null; reviveTarget: Tracker | null }> {
+
+  const match = await prisma.tracker.findFirst({
+    where: { imei }
+  });
+
+  if (!match) {
+    return { conflict: null, reviveTarget: null };
+  }
+
+  if (match.syncStatus !== "deleted") {
+    return { conflict: match, reviveTarget: null };
+  }
+
+  return { conflict: null, reviveTarget: match };
+}
+
+/**
  * Crea un tracker en la base local y lo replica en 3Dtracking. Antes
  * de escribir nada, valida (local + consulta en vivo a 3Dtracking)
- * que el IMEI no esté ya en uso. Lanza TrackerValidationError /
+ * que el IMEI no esté ya en uso. Si ya existe local con ese imei pero
+ * borrado (syncStatus "deleted"), en vez de bloquear reactiva
+ * (UPDATE) esa misma fila. Lanza TrackerValidationError /
  * TrackerDuplicateError si la validación falla, o si no se pudo ni
  * siquiera consultar 3Dtracking para validar.
  */
@@ -172,7 +202,7 @@ export async function createTrackerAndReplicate(
   prisma: PrismaClient,
   tracking3d: Tracking3DService,
   input: TrackerCreateInput
-): Promise<{ tracker: Tracker; replication: TrackerReplicationResult }> {
+): Promise<{ tracker: Tracker; replication: TrackerReplicationResult; revived: boolean }> {
 
   const imei = input.imei?.trim();
 
@@ -180,11 +210,9 @@ export async function createTrackerAndReplicate(
     throw new TrackerValidationError("IMEI requerido");
   }
 
-  const localDuplicate = await prisma.tracker.findFirst({
-    where: { imei }
-  });
+  const { conflict, reviveTarget } = await checkLocalTrackerForCreate(prisma, imei);
 
-  if (localDuplicate) {
+  if (conflict) {
     throw new TrackerDuplicateError(
       "local",
       "Ya existe un tracker local con ese IMEI"
@@ -195,7 +223,7 @@ export async function createTrackerAndReplicate(
   const tracking3dTrackers = await tracking3d.getTrackerList(session);
 
   const remoteDuplicate = tracking3dTrackers.find(
-    (item: Tracking3DTracker) => item && item.IMEI === imei
+    (item: Tracking3DTracker) => item && item.Uid !== reviveTarget?.uid && item.IMEI === imei
   );
 
   if (remoteDuplicate) {
@@ -205,18 +233,39 @@ export async function createTrackerAndReplicate(
     );
   }
 
-  const tracker = await prisma.tracker.create({
-    data: {
-      imei,
-      name: input.name?.trim() || null,
-      trackerTypeUid: input.trackerTypeUid?.trim() || null,
-      unitModelUid: input.unitModelUid?.trim() || null,
-      simUid: input.simUid?.trim() || null,
-      syncStatus: "pending"
-    }
-  });
+  const tracker = reviveTarget
+    ? await prisma.tracker.update({
+        where: { id: reviveTarget.id },
+        data: {
+          name: input.name?.trim() || null,
+          trackerTypeUid: input.trackerTypeUid?.trim() || null,
+          unitModelUid: input.unitModelUid?.trim() || null,
+          simUid: input.simUid?.trim() || null,
+          uid: null,
+          trackerTypeName: null,
+          unitModelName: null,
+          activationCode: null,
+          createdDateTimeUtc: null,
+          active: true,
+          syncStatus: "pending",
+          syncError: null,
+          syncedAt: null
+        }
+      })
+    : await prisma.tracker.create({
+        data: {
+          imei,
+          name: input.name?.trim() || null,
+          trackerTypeUid: input.trackerTypeUid?.trim() || null,
+          unitModelUid: input.unitModelUid?.trim() || null,
+          simUid: input.simUid?.trim() || null,
+          syncStatus: "pending"
+        }
+      });
 
-  return replicateTrackerToTracking3D(prisma, tracking3d, session, tracker);
+  const result = await replicateTrackerToTracking3D(prisma, tracking3d, session, tracker);
+
+  return { ...result, revived: Boolean(reviveTarget) };
 }
 
 export interface TrackerUpdateInput {

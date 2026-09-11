@@ -289,7 +289,7 @@ const trackerRoutes:
 
           }
 
-          const { tracker, replication } =
+          const { tracker, replication, revived } =
             await createTrackerAndReplicate(
               app.prisma,
               app.tracking3d,
@@ -304,12 +304,12 @@ const trackerRoutes:
           await logAction(app.prisma, {
             ...actor,
             module: "trackers",
-            action: "create",
+            action: revived ? "create-revive" : "create",
             resource: imei,
             success: true,
             message: replication.synced
               ? undefined
-              : `Creado local; falló replicación en 3Dtracking: ${replication.message}`,
+              : `${revived ? "Reactivado" : "Creado"} local; falló replicación en 3Dtracking: ${replication.message}`,
             requestBody: request.body,
             afterState: tracker
           });
@@ -321,6 +321,8 @@ const trackerRoutes:
               success: true,
 
               data: tracker,
+
+              revived,
 
               tracking3d: replication
 

@@ -4,5 +4,5 @@
 
 - [Autenticación — login / token](docs/auth.md)
 - [SIMs — creación individual y por lote](docs/tracking-sims.md)
-- [Trackers — sincronización local + programada](docs/tracking-trackers.md)
-- [Unidades — actualización de placa](docs/units-plate.md)
+- [Trackers — crear, listar, buscar, eliminar, asignar SIM, sync](docs/tracking-trackers.md)
+- [Unidades — crear, listar, buscar, eliminar, asignar GPS/tracker, placa](docs/units.md)

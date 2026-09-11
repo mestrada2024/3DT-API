@@ -41,6 +41,9 @@ import trackerTypeRoutes
 import unitModelRoutes
   from "./routes/unitmodels";
 
+import companyRoutes
+  from "./routes/companies";
+
 import tracking3dPlugin
   from "./plugins/tracking3d";
 
@@ -137,6 +140,14 @@ async function start() {
 
   await app.register(
     unitModelRoutes,
+    {
+      prefix: "/api/v1/tracking"
+    }
+  );
+
+
+  await app.register(
+    companyRoutes,
     {
       prefix: "/api/v1/tracking"
     }
