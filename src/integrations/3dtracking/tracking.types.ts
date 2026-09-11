@@ -106,3 +106,47 @@ export interface Tracking3DTracker {
   ActivationCode: string | null;
   CreatedDateTimeUtc: string;
 }
+
+export interface Tracking3DTrackerAssignment {
+  UnitUid: string | null;
+  UnitName: string | null;
+  SimUid: string | null;
+  PhoneNumber: string | null;
+  StartTimeLocal: string | null;
+  StartUser: string | null;
+  EndTimeLocal: string | null;
+  EndUser: string | null;
+}
+
+export interface Tracking3DTrackerAttribute {
+  AttributeId: number;
+  AttributeTypeId: number;
+  Name: string | null;
+  Group: string | null;
+  DataType: string | null;
+  Value: string | null;
+  LastUpdatedBy: string | null;
+  LastUpdatedDate: string;
+  RecurringDatePart: string | null;
+  RecurringNumber: number;
+}
+
+export interface Tracking3DTrackerDetail extends Tracking3DTracker {
+  UnitAssignments: Tracking3DTrackerAssignment[];
+  SimAssignments: Tracking3DTrackerAssignment[];
+  Attributes: Tracking3DTrackerAttribute[];
+}
+
+export interface Tracking3DCreateTrackerPayload {
+  Name?: string;
+  IMEI: string;
+  TrackerTypeUid?: string;
+  UnitModelUid?: string;
+  SimUid?: string;
+}
+
+export interface Tracking3DUpdateTrackerPayload {
+  Name?: string;
+  IMEI?: string;
+  SimUid?: string;
+}

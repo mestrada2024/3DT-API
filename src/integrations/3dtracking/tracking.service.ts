@@ -4,7 +4,9 @@ import {
 
 import {
   Tracking3DSession,
-  Tracking3DCreateSimPayload
+  Tracking3DCreateSimPayload,
+  Tracking3DCreateTrackerPayload,
+  Tracking3DUpdateTrackerPayload
 } from "./tracking.types";
 
 export class Tracking3DService {
@@ -55,6 +57,36 @@ export class Tracking3DService {
   async getTrackerList(session: Tracking3DSession) {
 
     return this.client.getTrackerList(session);
+  }
+
+  async getTrackerDetail(session: Tracking3DSession, uid: string) {
+
+    return this.client.getTrackerDetail(session, uid);
+  }
+
+  async createTracker(
+    session: Tracking3DSession,
+    payload: Tracking3DCreateTrackerPayload
+  ) {
+
+    return this.client.createTracker(session, payload);
+  }
+
+  async updateTracker(
+    session: Tracking3DSession,
+    uid: string,
+    payload: Tracking3DUpdateTrackerPayload
+  ) {
+
+    return this.client.updateTracker(session, uid, payload);
+  }
+
+  async deleteTracker(
+    session: Tracking3DSession,
+    uid: string
+  ) {
+
+    return this.client.deleteTracker(session, uid);
   }
 
   async createSim(

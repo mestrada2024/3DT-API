@@ -70,15 +70,18 @@ model Sim {
 }
 
 model AuditLog {
-  id        Int      @id @default(autoincrement())
-  userId    Int?
-  username  String?
-  module    String
-  action    String
-  resource  String?
-  success   Boolean
-  message   String?  @db.Text
-  createdAt DateTime @default(now())
+  id          Int      @id @default(autoincrement())
+  userId      Int?
+  username    String?
+  module      String
+  action      String
+  resource    String?
+  success     Boolean
+  message     String?  @db.Text
+  requestBody String?  @db.LongText
+  beforeState String?  @db.LongText
+  afterState  String?  @db.LongText
+  createdAt   DateTime @default(now())
 
   @@index([module, action])
   @@index([createdAt])
@@ -86,9 +89,9 @@ model AuditLog {
 
 model Tracker {
   id                 Int       @id @default(autoincrement())
-  uid                String    @unique
+  uid                String?   @unique
   name               String?
-  imei               String?
+  imei               String?   @unique
   trackerTypeUid     String?
   trackerTypeName    String?
   unitModelUid       String?
@@ -96,6 +99,28 @@ model Tracker {
   simUid             String?
   activationCode     String?
   createdDateTimeUtc DateTime?
+  syncStatus         String    @default("synced")
+  syncError          String?
+  syncedAt           DateTime?
+  active             Boolean   @default(true)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
+}
+
+model TrackerType {
+  id        Int      @id @default(autoincrement())
+  uid       String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UnitModel {
+  id              Int      @id @default(autoincrement())
+  uid             String   @unique
+  name            String   @unique
+  trackerTypeUid  String?
+  trackerTypeName String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }

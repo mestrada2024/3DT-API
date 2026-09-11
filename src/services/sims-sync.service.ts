@@ -502,7 +502,7 @@ export async function updateSimAndReplicate(
   tracking3d: Tracking3DService,
   identifier: string,
   input: SimUpdateInput
-): Promise<{ sim: Sim; replication: SimReplicationResult } | null> {
+): Promise<{ sim: Sim; replication: SimReplicationResult; before: Sim } | null> {
 
   const existing = await prisma.sim.findFirst({
     where: findActiveSimWhere(identifier)
@@ -538,7 +538,9 @@ export async function updateSimAndReplicate(
     }
   });
 
-  return replicateSimUpdateToTracking3D(prisma, tracking3d, session, sim);
+  const result = await replicateSimUpdateToTracking3D(prisma, tracking3d, session, sim);
+
+  return { ...result, before: existing };
 }
 
 /**
@@ -601,7 +603,7 @@ export async function deleteSimAndReplicate(
   prisma: PrismaClient,
   tracking3d: Tracking3DService,
   identifier: string
-): Promise<{ sim: Sim; replication: SimReplicationResult } | null> {
+): Promise<{ sim: Sim; replication: SimReplicationResult; before: Sim } | null> {
 
   const existing = await prisma.sim.findFirst({
     where: findActiveSimWhere(identifier)
@@ -616,5 +618,7 @@ export async function deleteSimAndReplicate(
     data: { active: false }
   });
 
-  return replicateSimDeleteToTracking3D(prisma, tracking3d, sim);
+  const result = await replicateSimDeleteToTracking3D(prisma, tracking3d, sim);
+
+  return { ...result, before: existing };
 }

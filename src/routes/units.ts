@@ -370,6 +370,9 @@ export default async function unitsRoutes(
           message: tracking3d.synced
             ? undefined
             : `Placa actualizada local; falló replicación en 3Dtracking: ${tracking3d.message}`,
+          requestBody: request.body,
+          beforeState: unit,
+          afterState: updated,
         });
 
         return reply.send({

@@ -35,11 +35,14 @@ import unitsRoutes
 import trackerRoutes
   from "./routes/trackers";
 
+import trackerTypeRoutes
+  from "./routes/trackertypes";
+
+import unitModelRoutes
+  from "./routes/unitmodels";
+
 import tracking3dPlugin
   from "./plugins/tracking3d";
-
-import { registerScheduledJobs }
-  from "./jobs/scheduler";
 
 
 
@@ -124,10 +127,19 @@ async function start() {
   );
 
 
-  registerScheduledJobs(
-    app.prisma,
-    app.tracking3d,
-    app.log
+  await app.register(
+    trackerTypeRoutes,
+    {
+      prefix: "/api/v1/tracking"
+    }
+  );
+
+
+  await app.register(
+    unitModelRoutes,
+    {
+      prefix: "/api/v1/tracking"
+    }
   );
 
 

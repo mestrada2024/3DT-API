@@ -524,7 +524,9 @@ const trackingRoutes:
             success: true,
             message: replication.synced
               ? undefined
-              : `${revived ? "Reactivado" : "Creado"} local; falló replicación en 3Dtracking: ${replication.message}`
+              : `${revived ? "Reactivado" : "Creado"} local; falló replicación en 3Dtracking: ${replication.message}`,
+            requestBody: request.body,
+            afterState: sim
           });
 
           return reply
@@ -551,7 +553,8 @@ const trackingRoutes:
               action: "create",
               resource: iccid,
               success: false,
-              message: error.message
+              message: error.message,
+              requestBody: request.body
             });
 
             return reply
@@ -581,7 +584,8 @@ const trackingRoutes:
               action: "create",
               resource: iccid,
               success: false,
-              message: error.message
+              message: error.message,
+              requestBody: request.body
             });
 
             return reply
@@ -607,7 +611,8 @@ const trackingRoutes:
             action: "create",
             resource: iccid,
             success: false,
-            message: error instanceof Error ? error.message : "Error desconocido"
+            message: error instanceof Error ? error.message : "Error desconocido",
+            requestBody: request.body
           });
 
           return reply
@@ -713,7 +718,9 @@ const trackingRoutes:
             success: result.errors === 0,
             message: result.errors > 0
               ? `${result.errors} de ${result.total} registros fallaron`
-              : undefined
+              : undefined,
+            requestBody: sims,
+            afterState: result.items
           });
 
           return reply.send({
@@ -736,7 +743,8 @@ const trackingRoutes:
             action: "import",
             resource: `0/${sims.length} creados`,
             success: false,
-            message
+            message,
+            requestBody: sims
           });
 
           return reply
@@ -844,7 +852,10 @@ const trackingRoutes:
             success: true,
             message: result.replication.synced
               ? undefined
-              : `Actualizado local; falló replicación en 3Dtracking: ${result.replication.message}`
+              : `Actualizado local; falló replicación en 3Dtracking: ${result.replication.message}`,
+            requestBody: request.body,
+            beforeState: result.before,
+            afterState: result.sim
           });
 
           return reply.send({
@@ -867,7 +878,8 @@ const trackingRoutes:
               action: "update",
               resource: identifier,
               success: false,
-              message: error.message
+              message: error.message,
+              requestBody: request.body
             });
 
             return reply
@@ -897,7 +909,8 @@ const trackingRoutes:
             action: "update",
             resource: identifier,
             success: false,
-            message: error instanceof Error ? error.message : "Error desconocido"
+            message: error instanceof Error ? error.message : "Error desconocido",
+            requestBody: request.body
           });
 
           return reply
@@ -1000,7 +1013,9 @@ const trackingRoutes:
             success: true,
             message: result.replication.synced
               ? undefined
-              : `Borrado local; no replicado en 3Dtracking: ${result.replication.message}`
+              : `Borrado local; no replicado en 3Dtracking: ${result.replication.message}`,
+            beforeState: result.before,
+            afterState: result.sim
           });
 
           return reply.send({

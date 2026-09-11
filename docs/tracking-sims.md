@@ -373,24 +373,38 @@ queda registrada en la tabla `AuditLog`: quién la ejecutó (`userId` /
 `username`, tomados del JWT), en qué módulo/acción, sobre qué recurso,
 si tuvo éxito, y un mensaje si algo falló.
 
-| Campo       | Notas                                                    |
-|-------------|-------------------------------------------------------------|
-| `userId`    | `sub` del JWT (id del usuario).                             |
-| `username`  | `username` del JWT.                                         |
-| `module`    | `"sims"` \| `"units"`.                                      |
-| `action`    | `"create"` \| `"update"` \| `"delete"` \| `"import"` \| `"update-plate"`. |
-| `resource`  | Identificador afectado (iccid, id de unidad, o `"N/M creados"` en `import`). |
-| `success`   | Si la operación (incluida la replicación en 3Dtracking) tuvo éxito. |
-| `message`   | Detalle del error, si `success` es `false`.                  |
+| Campo         | Notas                                                    |
+|---------------|-------------------------------------------------------------|
+| `userId`      | `sub` del JWT (id del usuario).                             |
+| `username`    | `username` del JWT.                                         |
+| `module`      | `"sims"` \| `"units"` \| `"trackers"`.                     |
+| `action`      | `"create"` \| `"create-revive"` \| `"update"` \| `"delete"` \| `"import"` \| `"update-plate"`. |
+| `resource`    | Identificador afectado (iccid/imei/uid, id de unidad, o `"N/M creados"` en `import`). |
+| `success`     | Si la operación (incluida la replicación en 3Dtracking) tuvo éxito. |
+| `message`     | Detalle del error, si `success` es `false`.                  |
+| `requestBody` | Parámetros/body que envió quien ejecutó el endpoint (JSON).  |
+| `beforeState` | Estado del registro antes del cambio — en `update`, el valor previo; en `delete`, el respaldo completo de cómo estaba configurado antes de borrarlo. |
+| `afterState`  | Estado del registro después del cambio (`create`/`update`/`delete`, este último reflejando el borrado lógico). |
+
+Campos sensibles (`pin`, `puk`, `password`) se enmascaran como `"***"` en
+`requestBody`/`beforeState`/`afterState` antes de guardarse — no quedan en
+texto plano en el log.
 
 No hay todavía un endpoint para consultarlo (solo vía DB directa):
 
 ```sql
-SELECT * FROM AuditLog ORDER BY createdAt DESC LIMIT 50;
+SELECT id, action, resource, success, requestBody, beforeState, afterState, createdAt
+FROM AuditLog
+ORDER BY createdAt DESC
+LIMIT 50;
 ```
 
 **Patrón para endpoints nuevos que escriban en 3Dtracking:** llamar
 `logAction()` (en `src/services/audit-log.service.ts`) justo después de
 intentar la operación, tanto en éxito como en error, usando
-`getActorFromRequest(request)` para obtener el actor. Ver los handlers
-de `src/routes/tracking3d.ts` como referencia.
+`getActorFromRequest(request)` para obtener el actor, y pasando siempre
+`requestBody`; agregar `afterState` en `create`/`update`, y `beforeState`
+en `update`/`delete` (para eso el servicio de negocio debe devolver el
+registro previo — ver `before` en `updateSimAndReplicate`/
+`deleteSimAndReplicate` en `sims-sync.service.ts` como referencia). Ver
+los handlers de `src/routes/tracking3d.ts` para el patrón completo.

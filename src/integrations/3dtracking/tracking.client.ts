@@ -8,7 +8,10 @@ import {
   Tracking3DUnitDetail,
   Tracking3DSimCard,
   Tracking3DCreateSimPayload,
-  Tracking3DTracker
+  Tracking3DTracker,
+  Tracking3DTrackerDetail,
+  Tracking3DCreateTrackerPayload,
+  Tracking3DUpdateTrackerPayload
 } from "./tracking.types";
 
 export class Tracking3DClient {
@@ -177,6 +180,100 @@ export class Tracking3DClient {
     return data.Result || [];
   }
 
+  /**
+   * 3Dtracking devuelve HTTP 200 con Result "vacío" (todos los campos
+   * en null, incluido Uid) cuando el tracker no existe, en vez de un
+   * 404. Se trata como "no encontrado" (null) en ambos casos: sin
+   * Result, o con Result.Uid null.
+   */
+  async getTrackerDetail(
+    session: Tracking3DSession,
+    uid: string
+  ): Promise<Tracking3DTrackerDetail | null> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId
+    });
+
+    const url =
+      `${this.baseUrl}/devices/tracker/${uid}/get?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking devices/tracker/{Uid}/get failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    if (!data.Result || !data.Result.Uid) {
+      return null;
+    }
+
+    return data.Result;
+  }
+
+  async createTracker(
+    session: Tracking3DSession,
+    payload: Tracking3DCreateTrackerPayload
+  ): Promise<Tracking3DTrackerDetail> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId,
+      Name: payload.Name || "",
+      IMEI: payload.IMEI,
+      TrackerTypeUid: payload.TrackerTypeUid || "",
+      UnitModelUid: payload.UnitModelUid || "",
+      SimUid: payload.SimUid || ""
+    });
+
+    const url =
+      `${this.baseUrl}/devices/tracker/create?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking devices/tracker/create failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    if (!data.Result || !data.Result.Uid) {
+
+      throw new Error(
+        `3Dtracking devices/tracker/create no devolvió un tracker válido: ${responseText}`
+      );
+    }
+
+    return data.Result;
+  }
+
   async createSim(
     session: Tracking3DSession,
     payload: Tracking3DCreateSimPayload
@@ -270,6 +367,102 @@ export class Tracking3DClient {
     }
 
     return data.Result;
+  }
+
+  /**
+   * A diferencia del resto de los endpoints, la respuesta no viene
+   * envuelta en { Status, Result }: el objeto de arriba (Result como
+   * "ok"/"Error", ErrorCode, Message) ES la respuesta completa. No
+   * hay datos del tracker en la respuesta, solo confirmación.
+   */
+  async updateTracker(
+    session: Tracking3DSession,
+    uid: string,
+    payload: Tracking3DUpdateTrackerPayload
+  ): Promise<void> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId,
+      Name: payload.Name || "",
+      IMEI: payload.IMEI || "",
+      SimUid: payload.SimUid || ""
+    });
+
+    const url =
+      `${this.baseUrl}/devices/tracker/${uid}/update?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking devices/tracker/{Uid}/update failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    if (data.Result !== "ok") {
+
+      throw new Error(
+        `3Dtracking devices/tracker/{Uid}/update failed: ${data.Message || responseText}`
+      );
+    }
+  }
+
+  /**
+   * Misma respuesta plana que updateTracker (sin envoltura Status):
+   * { Result, ErrorCode, Message }, Result "ok" en éxito.
+   */
+  async deleteTracker(
+    session: Tracking3DSession,
+    uid: string
+  ): Promise<void> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId
+    });
+
+    const url =
+      `${this.baseUrl}/devices/tracker/${uid}/delete?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking devices/tracker/{Uid}/delete failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    if (data.Result !== "ok") {
+
+      throw new Error(
+        `3Dtracking devices/tracker/{Uid}/delete failed: ${data.Message || responseText}`
+      );
+    }
   }
 
   async deleteSim(
