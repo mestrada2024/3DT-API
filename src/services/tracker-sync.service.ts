@@ -1,4 +1,4 @@
-import { PrismaClient, Tracker } from "@prisma/client";
+import { PrismaClient, Tracker, Sim } from "@prisma/client";
 
 import { Tracking3DService } from "../integrations/3dtracking/tracking.service";
 import { Tracking3DTracker, Tracking3DSession } from "../integrations/3dtracking/tracking.types";
@@ -448,4 +448,177 @@ export async function deleteTrackerAndReplicate(
   const result = await replicateTrackerDeleteToTracking3D(prisma, tracking3d, tracker);
 
   return { ...result, before: existing };
+}
+
+/**
+ * Asigna (o cambia) el SIM de un tracker. El SIM se identifica por
+ * iccid o externalId, y debe ya tener externalId (haberse creado en
+ * 3Dtracking). Actualiza local siempre primero (Tracker.simUid y, de
+ * forma bidireccional, Sim.trackerUid); si el tracker ya tiene uid,
+ * replica el cambio en 3Dtracking reusando devices/tracker/{Uid}/update
+ * (el mismo mecanismo que "switch sim card" en la doc de 3Dtracking).
+ * Devuelve null si el tracker no existe. Lanza TrackerValidationError
+ * si el SIM no existe o no tiene externalId.
+ */
+export async function assignSimToTracker(
+  prisma: PrismaClient,
+  tracking3d: Tracking3DService,
+  trackerIdentifier: string,
+  simIdentifier: string
+): Promise<{ tracker: Tracker; sim: Sim; replication: TrackerReplicationResult; before: Tracker } | null> {
+
+  const trackerBefore = await prisma.tracker.findFirst({
+    where: findActiveTrackerWhere(trackerIdentifier)
+  });
+
+  if (!trackerBefore) {
+    return null;
+  }
+
+  const sim = await prisma.sim.findFirst({
+    where: {
+      active: true,
+      OR: [
+        { iccid: simIdentifier },
+        { externalId: simIdentifier }
+      ]
+    }
+  });
+
+  if (!sim) {
+    throw new TrackerValidationError("SIM no encontrado (o borrado lógicamente)");
+  }
+
+  if (!sim.externalId) {
+    throw new TrackerValidationError("El SIM no tiene externalId (aún no se ha creado en 3Dtracking)");
+  }
+
+  const [tracker, updatedSim] = await Promise.all([
+    prisma.tracker.update({
+      where: { id: trackerBefore.id },
+      data: { simUid: sim.externalId }
+    }),
+    prisma.sim.update({
+      where: { id: sim.id },
+      data: { trackerUid: trackerBefore.uid }
+    })
+  ]);
+
+  if (!tracker.uid) {
+    return {
+      tracker,
+      sim: updatedSim,
+      before: trackerBefore,
+      replication: {
+        synced: false,
+        message: "El tracker no tiene uid (aún no se ha creado en 3Dtracking)"
+      }
+    };
+  }
+
+  const session = await tracking3d.authenticate();
+
+  try {
+    await tracking3d.updateTracker(session, tracker.uid, {
+      Name: tracker.name || undefined,
+      IMEI: tracker.imei || undefined,
+      SimUid: sim.externalId
+    });
+
+    const synced = await prisma.tracker.update({
+      where: { id: tracker.id },
+      data: { syncStatus: "synced", syncError: null, syncedAt: new Date() }
+    });
+
+    return { tracker: synced, sim: updatedSim, replication: { synced: true }, before: trackerBefore };
+
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Error desconocido";
+
+    const errored = await prisma.tracker.update({
+      where: { id: tracker.id },
+      data: { syncStatus: "error", syncError: message }
+    });
+
+    return { tracker: errored, sim: updatedSim, replication: { synced: false, message }, before: trackerBefore };
+  }
+}
+
+/**
+ * Quita el SIM asignado a un tracker. Actualiza local siempre primero
+ * (Tracker.simUid a null y, de forma bidireccional, el Sim.trackerUid
+ * correspondiente a null); si el tracker ya tiene uid, replica con
+ * devices/tracker/{Uid}/deallocatesim. Devuelve null si el tracker no
+ * existe. Lanza TrackerValidationError si el tracker no tiene SIM
+ * asignado.
+ */
+export async function deallocateSimFromTracker(
+  prisma: PrismaClient,
+  tracking3d: Tracking3DService,
+  trackerIdentifier: string
+): Promise<{ tracker: Tracker; sim: Sim | null; replication: TrackerReplicationResult; before: Tracker } | null> {
+
+  const trackerBefore = await prisma.tracker.findFirst({
+    where: findActiveTrackerWhere(trackerIdentifier)
+  });
+
+  if (!trackerBefore) {
+    return null;
+  }
+
+  if (!trackerBefore.simUid) {
+    throw new TrackerValidationError("El tracker no tiene un SIM asignado");
+  }
+
+  const previousSimUid = trackerBefore.simUid;
+
+  const [tracker] = await Promise.all([
+    prisma.tracker.update({
+      where: { id: trackerBefore.id },
+      data: { simUid: null }
+    }),
+    prisma.sim.updateMany({
+      where: { externalId: previousSimUid },
+      data: { trackerUid: null }
+    })
+  ]);
+
+  const sim = await prisma.sim.findFirst({
+    where: { externalId: previousSimUid }
+  });
+
+  if (!tracker.uid) {
+    return {
+      tracker,
+      sim,
+      before: trackerBefore,
+      replication: {
+        synced: false,
+        message: "El tracker no tiene uid (nunca se creó en 3Dtracking)"
+      }
+    };
+  }
+
+  const session = await tracking3d.authenticate();
+
+  try {
+    await tracking3d.deallocateSimFromTracker(session, tracker.uid, previousSimUid);
+
+    const synced = await prisma.tracker.update({
+      where: { id: tracker.id },
+      data: { syncStatus: "synced", syncError: null, syncedAt: new Date() }
+    });
+
+    return { tracker: synced, sim, replication: { synced: true }, before: trackerBefore };
+
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Error desconocido";
+
+    const errored = await prisma.tracker.update({
+      where: { id: tracker.id },
+      data: { syncStatus: "error", syncError: message }
+    });
+
+    return { tracker: errored, sim, replication: { synced: false, message }, before: trackerBefore };
+  }
 }

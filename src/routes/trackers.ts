@@ -7,6 +7,8 @@ import {
   createTrackerAndReplicate,
   updateTrackerAndReplicate,
   deleteTrackerAndReplicate,
+  assignSimToTracker,
+  deallocateSimFromTracker,
   TrackerValidationError,
   TrackerDuplicateError
 } from "../services/tracker-sync.service";
@@ -39,6 +41,11 @@ interface CreateTrackerBody {
 interface UpdateTrackerBody {
   name?: string;
   imei?: string;
+  simUid?: string;
+}
+
+interface AssignSimBody {
+  iccid?: string;
   simUid?: string;
 }
 
@@ -592,6 +599,347 @@ const trackerRoutes:
 
               message:
                 "Error actualizando el tracker"
+
+            });
+
+        }
+
+      }
+    );
+
+    /**
+     * Asignar (o cambiar) el SIM de un tracker
+     *
+     * El SIM se identifica por iccid o externalId (simUid) en el
+     * body, y debe ya tener externalId (haberse creado en
+     * 3Dtracking). Actualiza local siempre primero — Tracker.simUid
+     * y, de forma bidireccional, Sim.trackerUid — y, si el tracker ya
+     * tiene uid, replica el cambio con devices/tracker/{Uid}/update
+     * (el mecanismo real de 3Dtracking para asignar/cambiar SIM; no
+     * hay un endpoint "allocate" separado). Registra en el log de
+     * auditoría.
+     *
+     * POST
+     * /api/v1/tracking/trackers/:id/sim
+     */
+    app.post<{
+      Params: TrackerIdParams;
+      Body: AssignSimBody;
+    }>(
+      "/trackers/:id/sim",
+      {
+        preHandler: async (request) => {
+
+          await request.jwtVerify();
+
+        }
+      },
+      async (request, reply) => {
+
+        const identifier = request.params.id.trim();
+        const simIdentifier = (request.body?.iccid || request.body?.simUid || "").trim();
+
+        if (!identifier) {
+
+          return reply
+            .code(400)
+            .send({
+
+              success: false,
+
+              error:
+                "INVALID_IDENTIFIER",
+
+              message:
+                "El identificador del tracker no es válido"
+
+            });
+
+        }
+
+        if (!simIdentifier) {
+
+          return reply
+            .code(400)
+            .send({
+
+              success: false,
+
+              error:
+                "INVALID_BODY",
+
+              message:
+                "Se requiere iccid o simUid"
+
+            });
+
+        }
+
+        const actor = getActorFromRequest(request);
+
+        try {
+
+          const result =
+            await assignSimToTracker(
+              app.prisma,
+              app.tracking3d,
+              identifier,
+              simIdentifier
+            );
+
+          if (!result) {
+
+            return reply
+              .code(404)
+              .send({
+
+                success: false,
+
+                error:
+                  "TRACKER_NOT_FOUND",
+
+                message:
+                  "Tracker no encontrado"
+
+              });
+
+          }
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "trackers",
+            action: "assign-sim",
+            resource: identifier,
+            success: true,
+            message: result.replication.synced
+              ? undefined
+              : `Asignado local; falló replicación en 3Dtracking: ${result.replication.message}`,
+            requestBody: request.body,
+            beforeState: result.before,
+            afterState: result.tracker
+          });
+
+          return reply.send({
+
+            success: true,
+
+            data: result.tracker,
+
+            sim: result.sim,
+
+            tracking3d: result.replication
+
+          });
+
+        } catch (error) {
+
+          if (error instanceof TrackerValidationError) {
+
+            await logAction(app.prisma, {
+              ...actor,
+              module: "trackers",
+              action: "assign-sim",
+              resource: identifier,
+              success: false,
+              message: error.message,
+              requestBody: request.body
+            });
+
+            return reply
+              .code(400)
+              .send({
+
+                success: false,
+
+                error:
+                  "INVALID_BODY",
+
+                message: error.message
+
+              });
+
+          }
+
+          app.log.error(error);
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "trackers",
+            action: "assign-sim",
+            resource: identifier,
+            success: false,
+            message: error instanceof Error ? error.message : "Error desconocido",
+            requestBody: request.body
+          });
+
+          return reply
+            .code(500)
+            .send({
+
+              success: false,
+
+              error:
+                "INTERNAL_SERVER_ERROR",
+
+              message:
+                "Error asignando el SIM"
+
+            });
+
+        }
+
+      }
+    );
+
+    /**
+     * Quitar el SIM asignado a un tracker
+     *
+     * Actualiza local siempre primero — Tracker.simUid a null y, de
+     * forma bidireccional, el Sim.trackerUid correspondiente a null
+     * — y, si el tracker ya tiene uid, replica con
+     * devices/tracker/{Uid}/deallocatesim. Registra en el log de
+     * auditoría.
+     *
+     * DELETE
+     * /api/v1/tracking/trackers/:id/sim
+     */
+    app.delete<{
+      Params: TrackerIdParams;
+    }>(
+      "/trackers/:id/sim",
+      {
+        preHandler: async (request) => {
+
+          await request.jwtVerify();
+
+        }
+      },
+      async (request, reply) => {
+
+        const identifier = request.params.id.trim();
+
+        if (!identifier) {
+
+          return reply
+            .code(400)
+            .send({
+
+              success: false,
+
+              error:
+                "INVALID_IDENTIFIER",
+
+              message:
+                "El identificador del tracker no es válido"
+
+            });
+
+        }
+
+        const actor = getActorFromRequest(request);
+
+        try {
+
+          const result =
+            await deallocateSimFromTracker(
+              app.prisma,
+              app.tracking3d,
+              identifier
+            );
+
+          if (!result) {
+
+            return reply
+              .code(404)
+              .send({
+
+                success: false,
+
+                error:
+                  "TRACKER_NOT_FOUND",
+
+                message:
+                  "Tracker no encontrado"
+
+              });
+
+          }
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "trackers",
+            action: "deallocate-sim",
+            resource: identifier,
+            success: true,
+            message: result.replication.synced
+              ? undefined
+              : `Desasignado local; no replicado en 3Dtracking: ${result.replication.message}`,
+            beforeState: result.before,
+            afterState: result.tracker
+          });
+
+          return reply.send({
+
+            success: true,
+
+            data: result.tracker,
+
+            sim: result.sim,
+
+            tracking3d: result.replication
+
+          });
+
+        } catch (error) {
+
+          if (error instanceof TrackerValidationError) {
+
+            await logAction(app.prisma, {
+              ...actor,
+              module: "trackers",
+              action: "deallocate-sim",
+              resource: identifier,
+              success: false,
+              message: error.message
+            });
+
+            return reply
+              .code(400)
+              .send({
+
+                success: false,
+
+                error:
+                  "INVALID_BODY",
+
+                message: error.message
+
+              });
+
+          }
+
+          app.log.error(error);
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "trackers",
+            action: "deallocate-sim",
+            resource: identifier,
+            success: false,
+            message: error instanceof Error ? error.message : "Error desconocido"
+          });
+
+          return reply
+            .code(500)
+            .send({
+
+              success: false,
+
+              error:
+                "INTERNAL_SERVER_ERROR",
+
+              message:
+                "Error quitando el SIM"
 
             });
 

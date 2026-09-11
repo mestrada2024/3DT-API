@@ -77,6 +77,38 @@ curl -s http://localhost:3010/api/v1/tracking/sims/local/8952140012345678901 \
 
 ---
 
+## POST /api/v1/tracking/sims/sync
+
+Trae el inventario real de SIMs desde 3Dtracking (`Devices/Sim/List`) y
+hace *upsert* por `iccid` en la tabla local. Pensado como carga inicial o
+resync manual — no es recurrente/programado (mismo criterio que
+`POST /trackers/sync`).
+
+**No pisa `pin`/`puk` en un `update`**: 3Dtracking nunca los devuelve en
+el listado (siempre vienen vacíos), así que sobrescribirlos borraría lo
+que ya sabíamos localmente de los SIMs que creamos nosotros. Sí se fijan
+al crear un registro nuevo (ahí no hay nada que perder).
+
+Un mismo `iccid` repetido en 3Dtracking (puede pasar — se vio un caso real
+con dos SIMs distintos compartiendo `iccid`) no rompe el sync: como el
+*upsert* apunta al mismo `iccid`, el segundo simplemente sobrescribe al
+primero (queda contado como `updated`, no como error).
+
+```bash
+curl -s -X POST http://localhost:3010/api/v1/tracking/sims/sync \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Respuesta — 200
+
+```json
+{ "success": true, "data": { "total": 287, "created": 286, "updated": 1, "errors": 0 } }
+```
+
+`502 TRACKING3D_SYNC_ERROR` si no se pudo consultar 3Dtracking.
+
+---
+
 ## POST /api/v1/tracking/sims
 
 Crea un SIM individual.
@@ -89,7 +121,7 @@ Crea un SIM individual.
 | `phoneNumber` | string | No        | Único si se envía (misma validación que `iccid`).      |
 | `pin`         | string | No        |                                                         |
 | `puk`         | string | No        |                                                         |
-| `trackerUid`  | string | No        | Solo se guarda local. 3Dtracking no lo acepta al crear un SIM (ver "Integración con 3Dtracking" abajo). |
+| `trackerUid`  | string | No        | Solo se guarda local; normalmente no hace falta pasarlo a mano — lo mantiene `POST/DELETE /api/v1/tracking/trackers/:id/sim` (ver docs/tracking-trackers.md) al asignar/desasignar un tracker. |
 
 ### Ejemplo
 
@@ -231,7 +263,7 @@ y lo reporta en `tracking3d.message`.
 | `phoneNumber` |                                                                  |
 | `pin`         |                                                                  |
 | `puk`         |                                                                  |
-| `trackerUid`  | Solo local, no se envía a 3Dtracking (igual que en creación).  |
+| `trackerUid`  | Solo local; lo actualiza automáticamente el endpoint de asignación de SIM a tracker (ver docs/tracking-trackers.md), no hace falta tocarlo aquí. |
 
 `iccid` no es editable aquí (es el identificador del SIM).
 
@@ -328,8 +360,10 @@ Host: partnerapiv2.3dtracking.net
 
 Implementado en `src/integrations/3dtracking/tracking.client.ts`
 (`Tracking3DClient.createSim`). No admite `TrackerUid`: ese campo se
-guarda solo en la base local (`Sim.trackerUid`), pensado para una
-futura asociación SIM↔unidad, pero no se envía en esta llamada.
+guarda solo en la base local (`Sim.trackerUid`), pero no se envía en esta
+llamada — la asociación real SIM↔tracker se hace con
+`POST/DELETE /api/v1/tracking/trackers/:id/sim` (ver docs/tracking-trackers.md),
+que mantiene `Sim.trackerUid` sincronizado.
 
 `POST devices/sim/{Uid}/update` — mismos parámetros por query string,
 `{Uid}` es el `externalId` del SIM en 3Dtracking:

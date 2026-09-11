@@ -497,6 +497,55 @@ export class Tracking3DClient {
     }
   }
 
+  /**
+   * Misma respuesta plana que updateTracker/deleteTracker (sin
+   * envoltura Status): { Result, ErrorCode, Message }, Result "ok" en
+   * éxito. No borra el SIM ni el tracker, solo cierra la asignación
+   * entre ambos.
+   */
+  async deallocateSimFromTracker(
+    session: Tracking3DSession,
+    trackerUid: string,
+    simUid: string
+  ): Promise<void> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId,
+      SimUid: simUid
+    });
+
+    const url =
+      `${this.baseUrl}/devices/tracker/${trackerUid}/deallocatesim?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking devices/tracker/{Uid}/deallocatesim failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    if (data.Result !== "ok") {
+
+      throw new Error(
+        `3Dtracking devices/tracker/{Uid}/deallocatesim failed: ${data.Message || responseText}`
+      );
+    }
+  }
+
   async updateUnitAttribute(
     session: Tracking3DSession,
     uid: string,

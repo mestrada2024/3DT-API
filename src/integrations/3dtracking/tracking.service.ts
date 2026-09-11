@@ -89,6 +89,15 @@ export class Tracking3DService {
     return this.client.deleteTracker(session, uid);
   }
 
+  async deallocateSimFromTracker(
+    session: Tracking3DSession,
+    trackerUid: string,
+    simUid: string
+  ) {
+
+    return this.client.deallocateSimFromTracker(session, trackerUid, simUid);
+  }
+
   async createSim(
     session: Tracking3DSession,
     payload: Tracking3DCreateSimPayload

@@ -151,6 +151,92 @@ comportamiento aquí.
 
 ---
 
+## POST /api/v1/tracking/trackers/:id/sim
+
+Asigna (o cambia) el SIM de un tracker. El SIM se identifica por `iccid` o
+`externalId` (`simUid`) en el body, y debe ya tener `externalId` (haberse
+creado en 3Dtracking) — si no, `400`. Actualiza local siempre primero
+(`Tracker.simUid` y, de forma bidireccional, `Sim.trackerUid`); si el
+tracker ya tiene `uid`, replica el cambio con `devices/tracker/{Uid}/update`
+(3Dtracking no tiene un endpoint "allocate" separado — asignar/cambiar SIM
+**es** actualizar el tracker con un `SimUid` nuevo). Queda registrado en
+el log de auditoría.
+
+### Body (uno de los dos)
+
+| Campo    | Notas                                    |
+|----------|----------------------------------------------|
+| `iccid`  | Busca el SIM local por ICCID.                 |
+| `simUid` | Busca el SIM local por `externalId`.          |
+
+### Ejemplo
+
+```bash
+curl -s -X POST http://localhost:3010/api/v1/tracking/trackers/F1DEF6/sim \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"iccid":"8952140012345678903"}'
+```
+
+### Respuesta — 200
+
+```json
+{
+  "success": true,
+  "data": { "...": "...", "simUid": "4FCC4C" },
+  "sim": { "...": "...", "trackerUid": "F1DEF6" },
+  "tracking3d": { "synced": true }
+}
+```
+
+Verificado contra 3Dtracking real: el `GET /trackers/:uid` de ese tracker
+pasa a mostrar la asignación en `SimAssignments`, con `StartTimeLocal`/
+`StartUser` puestos por 3Dtracking.
+
+| Código | Error               | Motivo                                                        |
+|--------|----------------------|--------------------------------------------------------------|
+| 400    | `INVALID_IDENTIFIER` | `:id` vacío.                                                    |
+| 400    | `INVALID_BODY`       | Falta `iccid`/`simUid`, el SIM no existe, o no tiene `externalId`. |
+| 404    | `TRACKER_NOT_FOUND`  | No existe ningún tracker con ese `uid`/`imei`.                  |
+| 500    | `INTERNAL_SERVER_ERROR` | Error inesperado.                                            |
+
+---
+
+## DELETE /api/v1/tracking/trackers/:id/sim
+
+Quita el SIM asignado a un tracker. Actualiza local siempre primero
+(`Tracker.simUid` a `null` y, de forma bidireccional, el `Sim.trackerUid`
+correspondiente a `null`); si el tracker ya tiene `uid`, replica con el
+endpoint dedicado `devices/tracker/{Uid}/deallocatesim` (a diferencia de
+poner `SimUid` vacío en un `update`, esto cierra correctamente el registro
+de asignación en 3Dtracking — `EndTimeLocal`/`EndUser`, verificado contra
+datos reales). Queda registrado en el log de auditoría.
+
+```bash
+curl -s -X DELETE http://localhost:3010/api/v1/tracking/trackers/F1DEF6/sim \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Respuesta — 200
+
+```json
+{
+  "success": true,
+  "data": { "...": "...", "simUid": null },
+  "sim": { "...": "...", "trackerUid": null },
+  "tracking3d": { "synced": true }
+}
+```
+
+| Código | Error               | Motivo                                    |
+|--------|----------------------|------------------------------------------|
+| 400    | `INVALID_IDENTIFIER` | `:id` vacío.                                |
+| 400    | `INVALID_BODY`       | El tracker no tiene un SIM asignado.        |
+| 404    | `TRACKER_NOT_FOUND`  | No existe ningún tracker con ese `uid`/`imei`. |
+| 500    | `INTERNAL_SERVER_ERROR` | Error inesperado.                        |
+
+---
+
 ## POST /api/v1/tracking/trackers/sync
 
 Fuerza una sincronización completa contra `devices/tracker/list` (upsert por
@@ -449,3 +535,14 @@ Host: partnerapiv2.3dtracking.net
 
 Misma respuesta plana que `update` (`Result`/`ErrorCode`/`Message`, sin
 envoltura `Status`). Implementado en `Tracking3DClient.deleteTracker`.
+
+```
+POST /api/v1.0/devices/tracker/{Uid}/deallocatesim?UserIdGuid=&SessionId=&SimUid= HTTP/1.1
+Host: partnerapiv2.3dtracking.net
+```
+
+Misma respuesta plana. No hay un endpoint "allocate" separado: asignar o
+cambiar el SIM de un tracker es un `update` normal con `SimUid` nuevo (ver
+doc oficial: [`partnerapiv2.3dtracking.net/docs/v1/`](https://partnerapiv2.3dtracking.net/docs/v1/),
+spec en `openapi/v1.json`). Implementado en
+`Tracking3DClient.deallocateSimFromTracker`.

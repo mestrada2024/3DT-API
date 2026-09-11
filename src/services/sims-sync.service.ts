@@ -622,3 +622,85 @@ export async function deleteSimAndReplicate(
 
   return { ...result, before: existing };
 }
+
+export interface SimsSyncResult {
+  total: number;
+  created: number;
+  updated: number;
+  errors: number;
+}
+
+/**
+ * Sincroniza la tabla local Sim contra Devices/Sim/List (el inventario
+ * real de SIMs de la cuenta). Upsert por iccid. 3Dtracking nunca
+ * devuelve PIN/PUK en el listado (vienen siempre vacíos), así que el
+ * sync no los toca en un update — solo los fija en un create, donde
+ * no hay nada que perder. Un mismo iccid duplicado en 3Dtracking (dato
+ * real observado) se registra como error para ese item sin detener el
+ * resto del sync.
+ */
+export async function syncSimsFromTracking3D(
+  prisma: PrismaClient,
+  tracking3d: Tracking3DService
+): Promise<SimsSyncResult> {
+
+  const session = await tracking3d.authenticate();
+  const tracking3dSims = await tracking3d.getSimList(session);
+
+  let created = 0;
+  let updated = 0;
+  let errors = 0;
+
+  for (const sim of tracking3dSims) {
+    if (!sim?.ICCID) {
+      errors++;
+      continue;
+    }
+
+    try {
+      const phoneNumber = sim.PhoneNumber?.trim() || null;
+      const trackerUid = sim.TrackerUid?.trim() || null;
+      const pin = sim.PIN?.trim() || null;
+      const puk = sim.PUK?.trim() || null;
+
+      const result = await prisma.sim.upsert({
+        where: { iccid: sim.ICCID },
+        create: {
+          iccid: sim.ICCID,
+          phoneNumber,
+          trackerUid,
+          pin,
+          puk,
+          externalId: sim.Uid,
+          syncStatus: "synced",
+          syncedAt: new Date()
+        },
+        update: {
+          phoneNumber,
+          trackerUid,
+          externalId: sim.Uid,
+          syncStatus: "synced",
+          syncError: null,
+          syncedAt: new Date()
+        }
+      });
+
+      if (result.createdAt.getTime() === result.updatedAt.getTime()) {
+        created++;
+      } else {
+        updated++;
+      }
+
+    } catch (error) {
+      console.error(`Error sincronizando SIM ${sim.ICCID} (${sim.Uid}):`, error);
+      errors++;
+    }
+  }
+
+  return {
+    total: tracking3dSims.length,
+    created,
+    updated,
+    errors
+  };
+}

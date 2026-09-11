@@ -7,6 +7,7 @@ import {
   importSimsAndReplicate,
   updateSimAndReplicate,
   deleteSimAndReplicate,
+  syncSimsFromTracking3D,
   SimCreateInput,
   SimValidationError,
   SimDuplicateError
@@ -451,6 +452,69 @@ const trackingRoutes:
 
               message:
                 "Error buscando el SIM"
+
+            });
+
+        }
+
+      }
+    );
+
+    /**
+     * Sincronizar SIMs desde 3Dtracking
+     *
+     * Trae el inventario real de SIMs (Devices/Sim/List) y hace
+     * upsert por iccid en la tabla local. No toca pin/puk en un
+     * update (3Dtracking nunca los devuelve en el listado, así que
+     * pisarlos borraría lo que ya sabíamos localmente); sí los fija
+     * en un create. Pensado como carga inicial o resync manual, no
+     * es recurrente/programado.
+     *
+     * POST
+     * /api/v1/tracking/sims/sync
+     */
+    app.post(
+      "/sims/sync",
+      {
+        preHandler: async (request) => {
+
+          await request.jwtVerify();
+
+        }
+      },
+      async (request, reply) => {
+
+        try {
+
+          const result =
+            await syncSimsFromTracking3D(
+              app.prisma,
+              app.tracking3d
+            );
+
+          return reply.send({
+
+            success: true,
+
+            data: result
+
+          });
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          return reply
+            .code(502)
+            .send({
+
+              success: false,
+
+              error:
+                "TRACKING3D_SYNC_ERROR",
+
+              message:
+                "No se pudo sincronizar SIMs con 3Dtracking"
 
             });
 
