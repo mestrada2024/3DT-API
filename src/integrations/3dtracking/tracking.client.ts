@@ -668,6 +668,15 @@ export class Tracking3DClient {
         `3Dtracking devices/sim/{Uid}/delete failed: HTTP ${response.status} - ${responseText}`
       );
     }
+
+    const data = JSON.parse(responseText);
+
+    if (data.Result !== "ok") {
+
+      throw new Error(
+        `3Dtracking devices/sim/{Uid}/delete failed: ${data.Message || responseText}`
+      );
+    }
   }
 
   /**
@@ -805,6 +814,15 @@ export class Tracking3DClient {
 
       throw new Error(
         `3Dtracking Attributes/Update failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    if (data.Result !== "ok") {
+
+      throw new Error(
+        `3Dtracking Attributes/Update failed: ${data.Message || responseText}`
       );
     }
   }

@@ -1079,7 +1079,10 @@ const trackingRoutes:
             message: result.replication.synced
               ? undefined
               : `Eliminado local; no replicado en 3Dtracking: ${result.replication.message}`,
-            beforeState: result.before
+            beforeState: result.before,
+            afterState: result.unassignedFromTracker
+              ? { unassignedFromTracker: result.unassignedFromTracker }
+              : undefined
           });
 
           return reply.send({
@@ -1087,6 +1090,8 @@ const trackingRoutes:
             success: true,
 
             data: { ...result.before, deleted: true },
+
+            unassignedFromTracker: result.unassignedFromTracker ?? null,
 
             tracking3d: result.replication
 

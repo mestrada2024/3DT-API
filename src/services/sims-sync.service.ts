@@ -1,7 +1,8 @@
-import { PrismaClient, Sim } from "@prisma/client";
+import { PrismaClient, Sim, Tracker } from "@prisma/client";
 
 import { Tracking3DService } from "../integrations/3dtracking/tracking.service";
 import { Tracking3DSession, Tracking3DSimCard } from "../integrations/3dtracking/tracking.types";
+import { deallocateSimFromTracker } from "./tracker-sync.service";
 
 export interface SimCreateInput {
   iccid: string;
@@ -415,15 +416,21 @@ export async function updateSimAndReplicate(
 export interface SimDeleteResult {
   before: Sim;
   replication: SimReplicationResult;
+  unassignedFromTracker?: Tracker;
 }
 
 /**
  * Elimina el SIM de verdad (no lógico) de la base local. Antes
  * intenta eliminarlo también en 3Dtracking, si ya tenía externalId —
- * el resultado de esa replicación no se persiste en ninguna tabla
- * (la fila ya no existe): queda solo en el log de auditoría, junto
- * con el registro completo (`before`) como respaldo. Devuelve null si
- * no existe.
+ * 3Dtracking no permite eliminar un SIM mientras está asignado a un
+ * tracker, así que si el SIM tiene trackerUid se desasigna primero
+ * (best-effort: si esa desasignación falla, igual se intenta el
+ * delete, para no bloquear el borrado por eso); si se desasignó, el
+ * tracker resultante (ya sin ese SIM) se devuelve en
+ * `unassignedFromTracker`. El resultado de la replicación no se
+ * persiste en ninguna tabla (la fila ya no existe): queda solo en el
+ * log de auditoría, junto con el registro completo (`before`) como
+ * respaldo. Devuelve null si no existe.
  */
 export async function deleteSimAndReplicate(
   prisma: PrismaClient,
@@ -440,9 +447,22 @@ export async function deleteSimAndReplicate(
   }
 
   let replication: SimReplicationResult;
+  let unassignedFromTracker: Tracker | undefined;
 
   if (existing.externalId) {
     try {
+      if (existing.trackerUid) {
+        try {
+          const deallocateResult = await deallocateSimFromTracker(prisma, tracking3d, existing.trackerUid);
+
+          if (deallocateResult) {
+            unassignedFromTracker = deallocateResult.tracker;
+          }
+        } catch {
+          // best-effort: si falla, igual se intenta eliminar el SIM abajo
+        }
+      }
+
       const session = await tracking3d.authenticate();
 
       await tracking3d.deleteSim(session, existing.externalId);
@@ -466,7 +486,7 @@ export async function deleteSimAndReplicate(
     where: { id: existing.id }
   });
 
-  return { before: existing, replication };
+  return { before: existing, replication, unassignedFromTracker };
 }
 
 export interface SimsSyncResult {

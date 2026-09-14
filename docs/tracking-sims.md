@@ -317,6 +317,7 @@ curl -s -X DELETE http://localhost:3010/api/v1/tracking/sims/8952140012345678901
 {
   "success": true,
   "data": { "...": "...", "deleted": true },
+  "unassignedFromTracker": null,
   "tracking3d": { "synced": true }
 }
 ```
@@ -324,6 +325,29 @@ curl -s -X DELETE http://localhost:3010/api/v1/tracking/sims/8952140012345678901
 `data` es una copia del registro tal como estaba justo antes de borrarlo
 (ya no existe en la tabla) — el respaldo completo y consultable está en
 `AuditLog.beforeState` (ver [Auditoría](#auditoría)).
+
+Si el SIM tenía un tracker asignado, `unassignedFromTracker` trae el
+registro de ese tracker (ya con `simUid: null`, confirmando la
+desasignación) en vez de `null`:
+
+```json
+{
+  "success": true,
+  "data": { "...": "...", "deleted": true },
+  "unassignedFromTracker": { "id": 383, "uid": "58D870", "imei": "744433322211100", "simUid": null, "...": "..." },
+  "tracking3d": { "synced": true }
+}
+```
+
+**Regla de negocio real de 3Dtracking:** no permite eliminar un SIM
+mientras está asignado a un tracker (`"Unable to delete sim as it is
+currently assigned to Tracker with Uid ..."`). Por eso, si el SIM tiene
+`trackerUid`, este endpoint lo desasigna primero automáticamente
+(mismo mecanismo que `DELETE /api/v1/tracking/trackers/:id/sim`) y
+luego intenta eliminarlo — de un solo llamado, sin dejarlo huérfano.
+Si esa desasignación automática fallara por algún motivo, igual se
+intenta el borrado (queda reportado en `tracking3d.message` si el SIM
+termina sin poder eliminarse en 3Dtracking).
 
 | Código | Error           | Motivo                                   |
 |--------|------------------|--------------------------------------------|
