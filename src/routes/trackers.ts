@@ -14,6 +14,13 @@ import {
 } from "../services/tracker-sync.service";
 
 import {
+  applyConfigTemplateToTracker,
+  captureConfigTemplateFromTracker,
+  copyTrackerConfig,
+  TrackerConfigSourceError
+} from "../services/tracker-config-template.service";
+
+import {
   logAction,
   getActorFromRequest
 } from "../services/audit-log.service";
@@ -49,6 +56,11 @@ interface AssignSimBody {
   simUid?: string;
 }
 
+interface CopyConfigBody {
+  targetUid?: string;
+  targetImei?: string;
+}
+
 const trackerRoutes:
   FastifyPluginAsync =
   async (app) => {
@@ -68,7 +80,7 @@ const trackerRoutes:
      * ?page=1
      * ?limit=20
      * ?search=ABC  (busca en uid, name, imei, trackerTypeName, unitModelName)
-     * ?active=false
+     * ?active=false (vestigial: DELETE ahora borra la fila de verdad)
      */
     app.get<{
       Querystring: TrackersListQuery;
@@ -289,7 +301,7 @@ const trackerRoutes:
 
           }
 
-          const { tracker, replication, revived } =
+          const { tracker, replication } =
             await createTrackerAndReplicate(
               app.prisma,
               app.tracking3d,
@@ -301,17 +313,34 @@ const trackerRoutes:
               }
             );
 
+          const configTemplate =
+            replication.synced && tracker.uid
+              ? await applyConfigTemplateToTracker(
+                  app.prisma,
+                  app.tracking3d,
+                  tracker.uid,
+                  tracker.unitModelUid
+                )
+              : {
+                  applied: false,
+                  appliedAttributes: [],
+                  skippedAttributes: [],
+                  message: replication.synced
+                    ? undefined
+                    : "No se intentó: el tracker no se replicó en 3Dtracking"
+                };
+
           await logAction(app.prisma, {
             ...actor,
             module: "trackers",
-            action: revived ? "create-revive" : "create",
+            action: "create",
             resource: imei,
             success: true,
             message: replication.synced
               ? undefined
-              : `${revived ? "Reactivado" : "Creado"} local; falló replicación en 3Dtracking: ${replication.message}`,
+              : `Creado local; falló replicación en 3Dtracking: ${replication.message}`,
             requestBody: request.body,
-            afterState: tracker
+            afterState: { ...tracker, configTemplate }
           });
 
           return reply
@@ -322,9 +351,9 @@ const trackerRoutes:
 
               data: tracker,
 
-              revived,
+              tracking3d: replication,
 
-              tracking3d: replication
+              configTemplate
 
             });
 
@@ -409,6 +438,451 @@ const trackerRoutes:
 
               message:
                 "Error creando el tracker"
+
+            });
+
+        }
+
+      }
+    );
+
+    /**
+     * Re-aplicar la plantilla de configuración de un tracker
+     *
+     * Busca la plantilla del unitModel del tracker (:id acepta uid o
+     * imei) y aplica sus atributos con valor definido, igual que se
+     * hace automáticamente al crear (POST /trackers). Útil para
+     * trackers creados antes de que existiera una plantilla, o para
+     * reintentar tras editarla.
+     *
+     * POST
+     * /api/v1/tracking/trackers/:id/apply-config
+     */
+    app.post<{
+      Params: TrackerIdParams;
+    }>(
+      "/trackers/:id/apply-config",
+      {
+        preHandler: async (request) => {
+
+          await request.jwtVerify();
+
+        }
+      },
+      async (request, reply) => {
+
+        const identifier = request.params.id.trim();
+
+        if (!identifier) {
+
+          return reply
+            .code(400)
+            .send({
+
+              success: false,
+
+              error:
+                "INVALID_IDENTIFIER",
+
+              message:
+                "El identificador del tracker no es válido"
+
+            });
+
+        }
+
+        const actor = getActorFromRequest(request);
+
+        try {
+
+          const tracker =
+            await app.prisma.tracker.findFirst({
+              where: {
+                active: true,
+                OR: [
+                  { uid: identifier },
+                  { imei: identifier }
+                ]
+              }
+            });
+
+          if (!tracker) {
+
+            return reply
+              .code(404)
+              .send({
+
+                success: false,
+
+                error:
+                  "TRACKER_NOT_FOUND",
+
+                message:
+                  "Tracker no encontrado"
+
+              });
+
+          }
+
+          if (!tracker.uid) {
+
+            return reply
+              .code(400)
+              .send({
+
+                success: false,
+
+                error:
+                  "INVALID_BODY",
+
+                message:
+                  "El tracker no tiene uid (aún no se ha creado en 3Dtracking)"
+
+              });
+
+          }
+
+          const result =
+            await applyConfigTemplateToTracker(
+              app.prisma,
+              app.tracking3d,
+              tracker.uid,
+              tracker.unitModelUid
+            );
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "trackers",
+            action: "apply-config",
+            resource: identifier,
+            success: result.applied,
+            message: result.message,
+            afterState: result
+          });
+
+          return reply.send({
+
+            success: true,
+
+            data: result
+
+          });
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "trackers",
+            action: "apply-config",
+            resource: identifier,
+            success: false,
+            message: error instanceof Error ? error.message : "Error desconocido"
+          });
+
+          return reply
+            .code(500)
+            .send({
+
+              success: false,
+
+              error:
+                "INTERNAL_SERVER_ERROR",
+
+              message:
+                "Error aplicando la plantilla de configuración"
+
+            });
+
+        }
+
+      }
+    );
+
+    /**
+     * Capturar la plantilla de configuración desde un tracker real
+     *
+     * Simula "Copiar configuración de la Unidad" (panel de
+     * 3Dtracking): lee los atributos configurables ya establecidos en
+     * este tracker (:id acepta uid o imei) y los guarda como la
+     * plantilla del modelo de ese tracker — de ahí en adelante,
+     * POST /trackers los aplica automáticamente a los trackers nuevos
+     * de ese mismo modelo.
+     *
+     * POST
+     * /api/v1/tracking/trackers/:id/capture-config-template
+     */
+    app.post<{
+      Params: TrackerIdParams;
+    }>(
+      "/trackers/:id/capture-config-template",
+      {
+        preHandler: async (request) => {
+
+          await request.jwtVerify();
+
+        }
+      },
+      async (request, reply) => {
+
+        const identifier = request.params.id.trim();
+
+        if (!identifier) {
+
+          return reply
+            .code(400)
+            .send({
+
+              success: false,
+
+              error:
+                "INVALID_IDENTIFIER",
+
+              message:
+                "El identificador del tracker no es válido"
+
+            });
+
+        }
+
+        const actor = getActorFromRequest(request);
+
+        try {
+
+          const result =
+            await captureConfigTemplateFromTracker(
+              app.prisma,
+              app.tracking3d,
+              identifier
+            );
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "trackers",
+            action: "capture-config-template",
+            resource: identifier,
+            success: true,
+            afterState: result
+          });
+
+          return reply.send({
+
+            success: true,
+
+            data: result.template,
+
+            sourceTrackerUid: result.sourceTrackerUid,
+
+            capturedAttributes: result.capturedAttributes
+
+          });
+
+        } catch (error) {
+
+          if (error instanceof TrackerConfigSourceError) {
+
+            await logAction(app.prisma, {
+              ...actor,
+              module: "trackers",
+              action: "capture-config-template",
+              resource: identifier,
+              success: false,
+              message: error.message
+            });
+
+            return reply
+              .code(400)
+              .send({
+
+                success: false,
+
+                error:
+                  "INVALID_BODY",
+
+                message: error.message
+
+              });
+
+          }
+
+          app.log.error(error);
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "trackers",
+            action: "capture-config-template",
+            resource: identifier,
+            success: false,
+            message: error instanceof Error ? error.message : "Error desconocido"
+          });
+
+          return reply
+            .code(500)
+            .send({
+
+              success: false,
+
+              error:
+                "INTERNAL_SERVER_ERROR",
+
+              message:
+                "Error capturando la configuración"
+
+            });
+
+        }
+
+      }
+    );
+
+    /**
+     * Copiar configuración directo entre dos trackers
+     *
+     * Simula "Copiar configuración de la Unidad" tracker a tracker,
+     * sin pasar por la plantilla: lee los atributos configurables del
+     * tracker de origen (:id, acepta uid o imei) y los aplica tal
+     * cual al tracker destino (targetUid o targetImei en el body).
+     *
+     * POST
+     * /api/v1/tracking/trackers/:id/copy-config
+     */
+    app.post<{
+      Params: TrackerIdParams;
+      Body: CopyConfigBody;
+    }>(
+      "/trackers/:id/copy-config",
+      {
+        preHandler: async (request) => {
+
+          await request.jwtVerify();
+
+        }
+      },
+      async (request, reply) => {
+
+        const identifier = request.params.id.trim();
+        const targetIdentifier = (request.body?.targetUid || request.body?.targetImei || "").trim();
+
+        if (!identifier) {
+
+          return reply
+            .code(400)
+            .send({
+
+              success: false,
+
+              error:
+                "INVALID_IDENTIFIER",
+
+              message:
+                "El identificador del tracker no es válido"
+
+            });
+
+        }
+
+        if (!targetIdentifier) {
+
+          return reply
+            .code(400)
+            .send({
+
+              success: false,
+
+              error:
+                "INVALID_BODY",
+
+              message:
+                "Se requiere targetUid o targetImei"
+
+            });
+
+        }
+
+        const actor = getActorFromRequest(request);
+
+        try {
+
+          const result =
+            await copyTrackerConfig(
+              app.prisma,
+              app.tracking3d,
+              identifier,
+              targetIdentifier
+            );
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "trackers",
+            action: "copy-config",
+            resource: `${identifier} -> ${targetIdentifier}`,
+            success: result.result.applied,
+            message: result.result.message,
+            requestBody: request.body,
+            afterState: result
+          });
+
+          return reply.send({
+
+            success: true,
+
+            data: result
+
+          });
+
+        } catch (error) {
+
+          if (error instanceof TrackerConfigSourceError) {
+
+            await logAction(app.prisma, {
+              ...actor,
+              module: "trackers",
+              action: "copy-config",
+              resource: `${identifier} -> ${targetIdentifier}`,
+              success: false,
+              message: error.message,
+              requestBody: request.body
+            });
+
+            return reply
+              .code(400)
+              .send({
+
+                success: false,
+
+                error:
+                  "INVALID_BODY",
+
+                message: error.message
+
+              });
+
+          }
+
+          app.log.error(error);
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "trackers",
+            action: "copy-config",
+            resource: `${identifier} -> ${targetIdentifier}`,
+            success: false,
+            message: error instanceof Error ? error.message : "Error desconocido",
+            requestBody: request.body
+          });
+
+          return reply
+            .code(500)
+            .send({
+
+              success: false,
+
+              error:
+                "INTERNAL_SERVER_ERROR",
+
+              message:
+                "Error copiando la configuración"
 
             });
 
@@ -951,12 +1425,14 @@ const trackerRoutes:
     );
 
     /**
-     * Eliminar un tracker (borrado lógico)
+     * Eliminar un tracker (borrado físico)
      *
-     * Marca el tracker como inactivo (active: false) en la base
-     * local y, si ya tenía uid (fue creado en 3Dtracking), lo
-     * elimina allá con devices/tracker/{Uid}/delete. :id acepta uid
-     * o imei. Registra en el log de auditoría quién lo ejecutó.
+     * Intenta eliminarlo primero en 3Dtracking
+     * (devices/tracker/{Uid}/delete, si ya tenía uid) y luego lo
+     * borra de verdad de la tabla local — la fila deja de existir. El
+     * registro completo (beforeState) y el resultado de la réplica
+     * quedan en el log de auditoría, que es la única constancia de
+     * que existió y cómo estaba configurado. :id acepta uid o imei.
      *
      * DELETE
      * /api/v1/tracking/trackers/:id
@@ -1031,16 +1507,15 @@ const trackerRoutes:
             success: true,
             message: result.replication.synced
               ? undefined
-              : `Borrado local; no replicado en 3Dtracking: ${result.replication.message}`,
-            beforeState: result.before,
-            afterState: result.tracker
+              : `Eliminado local; no replicado en 3Dtracking: ${result.replication.message}`,
+            beforeState: result.before
           });
 
           return reply.send({
 
             success: true,
 
-            data: result.tracker,
+            data: { ...result.before, deleted: true },
 
             tracking3d: result.replication
 

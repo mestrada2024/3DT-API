@@ -26,7 +26,7 @@ Lista/busca en la tabla local.
 | `page`    | Default 1.                                                            |
 | `limit`   | Default 20, máx 100.                                                  |
 | `search`  | Busca coincidencia parcial en `uid`, `name`, `imei`, `trackerTypeName`, `unitModelName`. |
-| `active`  | `false` para ver los borrados lógicamente. Default: solo activos.    |
+| `active`  | Vestigial: `DELETE` ahora borra la fila de verdad, así que nunca hay inactivos que ver con `?active=false`. |
 
 ### Ejemplo
 
@@ -114,12 +114,11 @@ curl -s -X PATCH http://localhost:3010/api/v1/tracking/trackers/F1DEF6 \
 
 ## DELETE /api/v1/tracking/trackers/:id
 
-Borrado **lógico** en local: marca el tracker como `active: false` (no se
-elimina la fila). Si el tracker ya tenía `uid` (fue creado en 3Dtracking),
-además lo elimina allá con `devices/tracker/{Uid}/delete`. Si nunca se
-sincronizó (sin `uid`), solo se borra local y se reporta en
-`tracking3d.message`. `:id` acepta `uid` o `imei`. Queda registrado en el
-log de auditoría.
+Borrado **físico**: intenta eliminar primero en 3Dtracking (si el tracker
+ya tenía `uid`, con `devices/tracker/{Uid}/delete`) y luego borra de
+verdad la fila de la tabla local — deja de existir. El registro completo
+y el resultado de la réplica quedan **solo en el log de auditoría**
+(`beforeState`). `:id` acepta `uid` o `imei`.
 
 ```bash
 curl -s -X DELETE http://localhost:3010/api/v1/tracking/trackers/F1DEF6 \
@@ -131,25 +130,24 @@ curl -s -X DELETE http://localhost:3010/api/v1/tracking/trackers/F1DEF6 \
 ```json
 {
   "success": true,
-  "data": { "...": "...", "active": false, "syncStatus": "deleted" },
+  "data": { "...": "...", "deleted": true },
   "tracking3d": { "synced": true }
 }
 ```
 
+`data` es una copia del registro tal como estaba justo antes de borrarlo
+— el respaldo completo y consultable está en `AuditLog.beforeState`.
+
 | Código | Error                | Motivo                                    |
 |--------|-----------------------|----------------------------------------------|
 | 400    | `INVALID_IDENTIFIER`  | `:id` vacío.                                   |
-| 404    | `TRACKER_NOT_FOUND`   | No existe o ya estaba borrado.                 |
+| 404    | `TRACKER_NOT_FOUND`   | No existe.                                     |
 | 500    | `INTERNAL_SERVER_ERROR` | Error inesperado.                          |
 
-Un tracker borrado (`active: false`) deja de encontrarse por
-`GET/PATCH/DELETE .../trackers/:id` (salvo `GET .../trackers/local?active=false`,
-que sí los lista). Su `imei` **no** queda bloqueado para siempre: igual que
-con SIMs, si vuelves a hacer `POST /trackers` con ese mismo `imei`, en vez
-de crear una fila nueva se **reactiva** la existente (mismo `id`, campos
-actualizados con los nuevos valores, `active` vuelve a `true` y se
-reintenta crear en 3Dtracking desde cero — nuevo `uid`, ya que el anterior
-quedó eliminado allá). La respuesta trae `"revived": true` en ese caso.
+Al ser borrado físico, el `imei` queda libre de inmediato: volver a hacer
+`POST /trackers` con el mismo `imei` simplemente crea una fila nueva (no
+hay reactivación — no hay nada que reactivar, la fila anterior ya no
+existe).
 
 ---
 
@@ -470,6 +468,183 @@ recurrente/programada — correrla de nuevo cuando aparezcan modelos nuevos
 en 3Dtracking (por ejemplo, antes de crear un tracker con un modelo que
 `POST /trackers` no reconozca).
 
+---
+
+## Plantilla de configuración por modelo (`TrackerConfigTemplate`)
+
+Cada tracker trae un set fijo de `Attributes` (mismos nombres en todos los
+modelos — confirmado contra datos reales; solo 6 son editables:
+`Nombre de Usuario`, `Contraseña`, `Puerto de Mensaje Saliente`,
+`IP Enrutamiento`, `Puerto de  Enrutamiento`, `IP Dispositivo`; el resto
+son de solo lectura). El `AttributeId` de cada uno es propio de cada
+tracker individual, no del modelo — por eso aplicar una plantilla siempre
+implica primero buscar el atributo por **nombre** en el detalle en vivo de
+ese tracker puntual (mismo mecanismo que ya usa `PATCH /units/:id/plate`
+con el atributo "Placa").
+
+La plantilla se agrupa por **modelo exacto** (`unitModelUid`), no por
+marca/protocolo. Los valores no se infieren de nada — ningún tracker de
+esta cuenta tenía estos atributos configurados al momento de construir
+esto, así que hay que cargarlos a mano.
+
+### GET /api/v1/tracking/unitmodels/:uid/config-template
+
+```bash
+curl -s http://localhost:3010/api/v1/tracking/unitmodels/UM89/config-template \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+`200` con `{ success, data: { unitModelUid, unitModelName, attributes: [{name, value}] } }`,
+o `404 CONFIG_TEMPLATE_NOT_FOUND` si el modelo no tiene plantilla todavía.
+
+### PUT /api/v1/tracking/unitmodels/:uid/config-template
+
+Crea/reemplaza **por completo** la plantilla de un modelo (`:uid` debe
+existir en `UnitModel`, ver `GET /api/v1/tracking/unitmodels/local`).
+
+```json
+{
+  "attributes": {
+    "Nombre de Usuario": "usuario_ejemplo",
+    "Contraseña": "clave_ejemplo",
+    "Puerto de Mensaje Saliente": "5001",
+    "IP Enrutamiento": "",
+    "Puerto de  Enrutamiento": "",
+    "IP Dispositivo": ""
+  }
+}
+```
+
+Si se omite `attributes` (o se manda `{}`), se seedea con los 6 nombres
+conocidos y valor vacío — útil para crear la plantilla primero y
+completarla con otro `PUT` después. Un atributo con valor vacío/`null` se
+guarda pero **no se aplica** al crear un tracker (se omite, no se manda
+`""` a 3Dtracking).
+
+```bash
+curl -s -X PUT http://localhost:3010/api/v1/tracking/unitmodels/UM89/config-template \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"attributes":{"Nombre de Usuario":"admin","Contraseña":"secreta123"}}'
+```
+
+`404 UNIT_MODEL_NOT_FOUND` si `:uid` no existe en el catálogo local.
+
+### Aplicación automática — POST /api/v1/tracking/trackers
+
+Después de crear y replicar un tracker con éxito, si su `unitModelUid`
+tiene una plantilla con al menos un valor definido, se aplica
+automáticamente (`devices/tracker/{Uid}/attributes/update`). El resultado
+viene en `configTemplate` dentro de la respuesta:
+
+```json
+{
+  "success": true,
+  "data": { "...": "..." },
+  "tracking3d": { "synced": true },
+  "configTemplate": {
+    "applied": true,
+    "appliedAttributes": ["Nombre de Usuario", "Contraseña", "Puerto de Mensaje Saliente"],
+    "skippedAttributes": []
+  }
+}
+```
+
+`applied: false` con un `message` explicando por qué (sin plantilla, sin
+valores definidos, la replicación en 3Dtracking falló, etc.) — nunca
+bloquea la creación del tracker.
+
+### POST /api/v1/tracking/trackers/:id/capture-config-template
+
+Simula la opción **"Copiar configuración de la Unidad"** del panel de
+3Dtracking: en vez de escribir los valores a mano, lee los atributos
+configurables que **ya tiene establecidos** un tracker real (`:id`, acepta
+`uid` o `imei`) y los guarda como la plantilla del modelo de ese tracker.
+Útil cuando ya hay una unidad funcionando correctamente y se quiere que
+los siguientes trackers del mismo modelo salgan configurados igual, sin
+necesidad de saber los valores de antemano.
+
+```bash
+curl -s -X POST http://localhost:3010/api/v1/tracking/trackers/C94063/capture-config-template \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "success": true,
+  "data": { "unitModelUid": "UM89", "unitModelName": "AK7(S)", "attributes": [ { "name": "Nombre de Usuario", "value": "..." } ] },
+  "sourceTrackerUid": "C94063",
+  "capturedAttributes": ["Nombre de Usuario", "Contraseña", "IP Dispositivo"]
+}
+```
+
+Solo captura los atributos configurables que el tracker de origen tiene
+con valor no vacío (ignora los de solo lectura y los que están en blanco).
+
+| Código | Error         | Motivo                                                        |
+|--------|----------------|--------------------------------------------------------------|
+| 400    | `INVALID_BODY` | Tracker de origen no encontrado, sin `uid`, sin `unitModelUid`, o sin ningún atributo configurado para copiar. |
+| 500    | `INTERNAL_SERVER_ERROR` | Error inesperado.                                    |
+
+### POST /api/v1/tracking/trackers/:id/copy-config
+
+Misma idea, pero **tracker a tracker directo**, sin pasar por la
+plantilla: copia los atributos configurables del tracker de origen
+(`:id`) al tracker destino (`targetUid` o `targetImei` en el body) —
+funciona aunque sean de modelos distintos.
+
+```bash
+curl -s -X POST http://localhost:3010/api/v1/tracking/trackers/C94063/copy-config \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"targetUid":"C94072"}'
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "sourceTrackerUid": "C94063",
+    "targetTrackerUid": "C94072",
+    "result": { "applied": true, "appliedAttributes": ["Nombre de Usuario", "Contraseña", "IP Dispositivo"], "skippedAttributes": [] }
+  }
+}
+```
+
+| Código | Error         | Motivo                                                        |
+|--------|----------------|--------------------------------------------------------------|
+| 400    | `INVALID_BODY` | Falta `targetUid`/`targetImei`, origen/destino no encontrado, sin `uid`, o el origen no tiene atributos configurados. |
+| 500    | `INTERNAL_SERVER_ERROR` | Error inesperado.                                    |
+
+Ambos endpoints probados contra 3Dtracking real: configuré un tracker
+"fuente" manualmente, capturé su plantilla, confirmé que un tracker nuevo
+del mismo modelo la recibió automáticamente al crearse, y confirmé que
+`copy-config` replica los valores directo a otro tracker de un modelo
+distinto.
+
+### POST /api/v1/tracking/trackers/:id/apply-config
+
+Re-aplica manualmente la plantilla del modelo de un tracker ya existente
+(`:id` acepta `uid` o `imei`) — útil para trackers creados antes de que
+existiera la plantilla, o para reintentar después de editarla.
+
+```bash
+curl -s -X POST http://localhost:3010/api/v1/tracking/trackers/F1DEF6/apply-config \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Misma forma de respuesta que el campo `configTemplate` de arriba.
+
+| Código | Error               | Motivo                                   |
+|--------|----------------------|--------------------------------------------|
+| 400    | `INVALID_IDENTIFIER` | `:id` vacío.                                 |
+| 400    | `INVALID_BODY`       | El tracker no tiene `uid` (nunca se creó en 3Dtracking). |
+| 404    | `TRACKER_NOT_FOUND`  | No existe ningún tracker con ese `uid`/`imei`. |
+| 500    | `INTERNAL_SERVER_ERROR` | Error inesperado.                        |
+
+Verificado contra 3Dtracking real: los valores quedaron guardados en el
+tracker (confirmado leyendo de vuelta `GET /trackers/:uid`).
+
 ## Integración con 3Dtracking
 
 ```
@@ -548,3 +723,16 @@ cambiar el SIM de un tracker es un `update` normal con `SimUid` nuevo (ver
 doc oficial: [`partnerapiv2.3dtracking.net/docs/v1/`](https://partnerapiv2.3dtracking.net/docs/v1/),
 spec en `openapi/v1.json`). Implementado en
 `Tracking3DClient.deallocateSimFromTracker`.
+
+```
+POST /api/v1.0/devices/tracker/{Uid}/attributes/update?UserIdGuid=&SessionId= HTTP/1.1
+Content-Type: application/json
+Host: partnerapiv2.3dtracking.net
+
+[ { "AttributeId": 8986529, "Value": "usuario_ejemplo" }, ... ]
+```
+
+Body es un arreglo (a diferencia de `Units/{Uid}/Attributes/Update`, que
+también acepta arreglo pero nosotros solo mandábamos uno; aquí sí se
+manda más de uno a la vez). Misma respuesta plana `{Result, ErrorCode,
+Message}`. Implementado en `Tracking3DClient.updateTrackerAttributes`.

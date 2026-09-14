@@ -42,7 +42,7 @@ muestra los SIMs activos.
 | `limit`      | Default 20, máx 100.                                              |
 | `search`     | Busca coincidencia parcial en `iccid`, `phoneNumber`, `trackerUid`.|
 | `active`     | `false` para ver los borrados lógicamente. Default: solo activos. |
-| `syncStatus` | Filtro exacto: `pending` \| `synced` \| `error` \| `deleted`.      |
+| `syncStatus` | Filtro exacto: `pending` \| `synced` \| `error`.      |
 
 ### Ejemplo
 
@@ -297,11 +297,12 @@ curl -s -X PATCH http://localhost:3010/api/v1/tracking/sims/8952140012345678901 
 
 ## DELETE /api/v1/tracking/sims/:id
 
-Borrado **lógico** en local: marca el SIM como `active: false` (no se
-elimina la fila). Si el SIM ya tenía `externalId` (fue creado en
-3Dtracking), además lo elimina allá con `devices/sim/{Uid}/delete`. Si
-nunca se sincronizó (sin `externalId`), solo se borra local y se
-reporta en `tracking3d.message`. `:id` acepta `iccid` o `externalId`.
+Borrado **físico**: intenta eliminar primero en 3Dtracking (si el SIM ya
+tenía `externalId`, con `devices/sim/{Uid}/delete`) y luego borra de
+verdad la fila de la tabla local — deja de existir. El registro completo
+y el resultado de la réplica quedan **solo en el log de auditoría**
+(`beforeState`), que es la única constancia de que existió y cómo estaba
+configurado. `:id` acepta `iccid` o `externalId`.
 
 ### Ejemplo
 
@@ -315,27 +316,25 @@ curl -s -X DELETE http://localhost:3010/api/v1/tracking/sims/8952140012345678901
 ```json
 {
   "success": true,
-  "data": { "...": "...", "active": false, "syncStatus": "deleted" },
+  "data": { "...": "...", "deleted": true },
   "tracking3d": { "synced": true }
 }
 ```
 
+`data` es una copia del registro tal como estaba justo antes de borrarlo
+(ya no existe en la tabla) — el respaldo completo y consultable está en
+`AuditLog.beforeState` (ver [Auditoría](#auditoría)).
+
 | Código | Error           | Motivo                                   |
 |--------|------------------|--------------------------------------------|
 | 400    | `INVALID_IDENTIFIER` | `:id` vacío.                           |
-| 404    | `SIM_NOT_FOUND`  | No existe o ya estaba borrado.             |
+| 404    | `SIM_NOT_FOUND`  | No existe.                                 |
 | 500    | `INTERNAL_SERVER_ERROR` | Error inesperado.                  |
 
-Un SIM borrado (`active: false`) deja de poder actualizarse (`PATCH`
-responde 404). Su `iccid` **no** queda bloqueado para siempre: si
-vuelves a hacer `POST /sims` con ese mismo `iccid`, en vez de crear una
-fila nueva se **reactiva** la existente (mismo `id`, se actualizan los
-demás campos con los nuevos valores, `active` vuelve a `true` y se
-vuelve a intentar crear en 3Dtracking desde cero). La respuesta trae
-`"revived": true` en ese caso. Si el `phoneNumber` que se envía
-pertenece a otra fila que sigue activa, sí bloquea (`409`) — la
-reactivación solo libera el `iccid`/`phoneNumber` que pertenecían a esa
-misma fila borrada.
+Al ser borrado físico, el `iccid` queda libre de inmediato: volver a
+hacer `POST /sims` con el mismo `iccid` simplemente crea una fila nueva
+(no hay reactivación — no hay nada que reactivar, la fila anterior ya no
+existe).
 
 ---
 
@@ -391,10 +390,9 @@ Implementado en `Tracking3DClient.deleteSim`.
 |---------------|----------------------------------------------------------------|
 | `iccid`       | Único. Identificador local y el que se manda a 3Dtracking.     |
 | `externalId`  | `Uid` que devuelve 3Dtracking al crear. `null` si aún no sincroniza. |
-| `syncStatus`  | `"pending"` (recién creado, sin intento aún — no ocurre en el flujo actual, siempre se intenta al crear), `"synced"`, `"error"`, o `"deleted"` (eliminado con éxito en 3Dtracking). |
+| `syncStatus`  | `"pending"` (recién creado, sin intento aún — no ocurre en el flujo actual, siempre se intenta al crear), `"synced"`, o `"error"`. No hay `"deleted"`: un SIM eliminado ya no existe como fila, se borra de verdad. |
 | `syncError`   | Último mensaje de error de 3Dtracking, si `syncStatus` es `"error"`. |
-| `syncedAt`    | Fecha del último éxito replicando en 3Dtracking (crear, actualizar o eliminar). |
-| `active`      | `false` tras un `DELETE` (borrado lógico); `PATCH`/`DELETE` solo encuentran SIMs con `active: true`. |
+| `syncedAt`    | Fecha del último éxito replicando en 3Dtracking (crear o actualizar; en `delete` no aplica, la fila se borra). |
 
 
 ---
@@ -412,13 +410,13 @@ si tuvo éxito, y un mensaje si algo falló.
 | `userId`      | `sub` del JWT (id del usuario).                             |
 | `username`    | `username` del JWT.                                         |
 | `module`      | `"sims"` \| `"units"` \| `"trackers"`.                     |
-| `action`      | `"create"` \| `"create-revive"` \| `"update"` \| `"delete"` \| `"import"` \| `"update-plate"` \| `"assign-sim"` \| `"deallocate-sim"`. |
+| `action`      | `"create"` \| `"update"` \| `"delete"` \| `"import"` \| `"update-plate"` \| `"assign-sim"` \| `"deallocate-sim"`. |
 | `resource`    | Identificador afectado (iccid/imei/uid, id de unidad, o `"N/M creados"` en `import`). |
 | `success`     | Si la operación (incluida la replicación en 3Dtracking) tuvo éxito. |
 | `message`     | Detalle del error, si `success` es `false`.                  |
 | `requestBody` | Parámetros/body que envió quien ejecutó el endpoint (JSON).  |
 | `beforeState` | Estado del registro antes del cambio — en `update`, el valor previo; en `delete`, el respaldo completo de cómo estaba configurado antes de borrarlo. |
-| `afterState`  | Estado del registro después del cambio (`create`/`update`/`delete`, este último reflejando el borrado lógico). |
+| `afterState`  | Estado del registro después del cambio (`create`/`update`). En `delete` va `null` — la fila ya no existe; el respaldo es `beforeState`. |
 
 Campos sensibles (`pin`, `puk`, `password`) se enmascaran como `"***"` en
 `requestBody`/`beforeState`/`afterState` antes de guardarse — no quedan en

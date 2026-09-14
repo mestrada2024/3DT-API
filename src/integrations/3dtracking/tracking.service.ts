@@ -122,6 +122,15 @@ export class Tracking3DService {
     return this.client.deleteTracker(session, uid);
   }
 
+  async updateTrackerAttributes(
+    session: Tracking3DSession,
+    uid: string,
+    updates: Array<{ AttributeId: number; Value: string }>
+  ) {
+
+    return this.client.updateTrackerAttributes(session, uid, updates);
+  }
+
   async deallocateSimFromTracker(
     session: Tracking3DSession,
     trackerUid: string,

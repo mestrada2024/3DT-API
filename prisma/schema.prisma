@@ -126,3 +126,42 @@ model UnitModel {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
+
+model Company {
+  id                 Int       @id @default(autoincrement())
+  uid                String    @unique
+  name               String?
+  status             String?
+  serviceType        String?
+  country            String?
+  currency           String?
+  language           String?
+  timeZone           String?
+  contactEmail       String?
+  contactPhone       String?
+  contactPosition    String?
+  contactName        String?
+  notes              String?   @db.Text
+  createdDateTimeUtc DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+model TrackerConfigTemplate {
+  id            Int                      @id @default(autoincrement())
+  unitModelUid  String                   @unique
+  unitModelName String?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+  attributes    TrackerConfigAttribute[]
+}
+
+model TrackerConfigAttribute {
+  id         Int                   @id @default(autoincrement())
+  templateId Int
+  name       String
+  value      String?
+  template   TrackerConfigTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, name])
+}

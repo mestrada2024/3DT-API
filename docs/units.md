@@ -12,9 +12,9 @@ SIMs/trackers — ver [POST /api/v1/units](#post-apiv1units) abajo.
 
 ## GET /api/v1/tracking/companies
 
-Lectura en vivo (sin tabla local — son ~24 compañías, un catálogo pequeño
-y estable) del listado de compañías de la cuenta. Necesario para el
-`companyUid` que exige `POST /api/v1/units`.
+Lectura **en vivo** (no toca la tabla local) del listado de compañías de
+la cuenta — útil para el `companyUid` que exige `POST /api/v1/units` sin
+depender de que el catálogo local esté sincronizado.
 
 ```bash
 curl -s http://localhost:3010/api/v1/tracking/companies \
@@ -30,6 +30,36 @@ curl -s http://localhost:3010/api/v1/tracking/companies \
 }
 ```
 
+## GET /api/v1/tracking/companies/local
+
+Lista/busca en la tabla local `Company` (mismo patrón que
+`TrackerType`/`UnitModel`).
+
+| Parámetro | Notas                                                |
+|-----------|---------------------------------------------------------|
+| `page`    | Default 1.                                                |
+| `limit`   | Default 20, máx 100.                                        |
+| `search`  | Busca coincidencia parcial en `uid`, `name`, `country`.      |
+
+```bash
+curl -s "http://localhost:3010/api/v1/tracking/companies/local?search=El Salvador" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## POST /api/v1/tracking/companies/sync
+
+Sincroniza la tabla local contra `company/list`. Upsert por `uid`. No es
+recurrente/programada.
+
+```bash
+curl -s -X POST http://localhost:3010/api/v1/tracking/companies/sync \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{ "success": true, "data": { "total": 31, "created": 31, "updated": 0, "errors": 0 } }
+```
+
 ---
 
 ## GET /api/v1/units
@@ -42,7 +72,7 @@ Listado local paginado.
 |------------|------------------------------------------------------------------|
 | `page`     | Default 1.                                                        |
 | `limit`    | Default 20, máx 100.                                               |
-| `active`   | `true`/`false`. Sin este parámetro, muestra **todas** (activas e inactivas) — a diferencia de SIMs/trackers, aquí no filtra por activas por defecto. |
+| `active`   | Vestigial: `DELETE` ahora borra la fila de verdad, así que nunca hay inactivas que filtrar. |
 | `search`   | Busca coincidencia parcial en `name`, `plate`, `imei`.             |
 | `hasPlate` | `true` para solo unidades con placa asignada.                      |
 
@@ -132,9 +162,16 @@ Si no se pasa `trackerUid`, la unidad queda sin tracker asignado
 
 ## DELETE /api/v1/units/:id
 
-Borrado **lógico** (`active: false`) — puramente local, porque
-**3Dtracking no tiene ningún endpoint para eliminar unidades**. La
-respuesta siempre trae `tracking3d.synced: false` explicando esto.
+Borrado **físico** — puramente local, porque **3Dtracking no tiene ningún
+endpoint para eliminar unidades**. Borra de verdad la fila de la tabla
+`Unit` (deja de existir); el registro completo queda solo en el log de
+auditoría (`beforeState`). La respuesta siempre trae `tracking3d.synced: false`
+explicando por qué no se replicó en 3Dtracking.
+
+**Nota:** el borrado es en cascada sobre el historial de posiciones GPS
+de esa unidad (tabla `Position`, `onDelete: Cascade`) — ese historial
+**no** se guarda en el log (sería demasiado grande), solo el registro de
+la unidad misma.
 
 ```bash
 curl -s -X DELETE http://localhost:3010/api/v1/units/227EE5 \
@@ -144,7 +181,7 @@ curl -s -X DELETE http://localhost:3010/api/v1/units/227EE5 \
 ```json
 {
   "success": true,
-  "data": { "...": "...", "active": false },
+  "data": { "...": "...", "deleted": true },
   "tracking3d": { "synced": false, "message": "3Dtracking no tiene un endpoint para eliminar unidades; el borrado es solo local" }
 }
 ```

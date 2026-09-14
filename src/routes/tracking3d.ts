@@ -242,8 +242,9 @@ const trackingRoutes:
      * ?page=1
      * ?limit=20
      * ?search=ABC        (busca en iccid, phoneNumber, trackerUid)
-     * ?active=false
-     * ?syncStatus=error  (pending | synced | error | deleted)
+     * ?active=false      (vestigial: DELETE ahora borra la fila de
+     *                     verdad, así que nunca hay inactivos que ver)
+     * ?syncStatus=error  (pending | synced | error)
      */
     app.get<{
       Querystring: SimsListQuery;
@@ -573,7 +574,7 @@ const trackingRoutes:
 
         try {
 
-          const { sim, replication, revived } =
+          const { sim, replication } =
             await createSimAndReplicate(
               app.prisma,
               app.tracking3d,
@@ -583,12 +584,12 @@ const trackingRoutes:
           await logAction(app.prisma, {
             ...actor,
             module: "sims",
-            action: revived ? "create-revive" : "create",
+            action: "create",
             resource: iccid,
             success: true,
             message: replication.synced
               ? undefined
-              : `${revived ? "Reactivado" : "Creado"} local; falló replicación en 3Dtracking: ${replication.message}`,
+              : `Creado local; falló replicación en 3Dtracking: ${replication.message}`,
             requestBody: request.body,
             afterState: sim
           });
@@ -600,8 +601,6 @@ const trackingRoutes:
               success: true,
 
               data: sim,
-
-              revived,
 
               tracking3d: replication
 
@@ -997,12 +996,14 @@ const trackingRoutes:
     );
 
     /**
-     * Eliminar un SIM (borrado lógico)
+     * Eliminar un SIM (borrado físico)
      *
-     * Marca el SIM como inactivo (active: false) en la base local y,
-     * si ya tenía externalId (fue creado en 3Dtracking), lo elimina
-     * allá con devices/sim/{Uid}/delete. :id acepta iccid o
-     * externalId. Registra en el log de auditoría quién lo ejecutó.
+     * Intenta eliminarlo primero en 3Dtracking (devices/sim/{Uid}/delete,
+     * si ya tenía externalId) y luego lo borra de verdad de la tabla
+     * local — la fila deja de existir. El registro completo
+     * (beforeState) y el resultado de la réplica quedan en el log de
+     * auditoría, que es la única constancia de que existió y cómo
+     * estaba configurado. :id acepta iccid o externalId.
      *
      * DELETE
      * /api/v1/tracking/sims/:id
@@ -1077,16 +1078,15 @@ const trackingRoutes:
             success: true,
             message: result.replication.synced
               ? undefined
-              : `Borrado local; no replicado en 3Dtracking: ${result.replication.message}`,
-            beforeState: result.before,
-            afterState: result.sim
+              : `Eliminado local; no replicado en 3Dtracking: ${result.replication.message}`,
+            beforeState: result.before
           });
 
           return reply.send({
 
             success: true,
 
-            data: result.sim,
+            data: { ...result.before, deleted: true },
 
             tracking3d: result.replication
 

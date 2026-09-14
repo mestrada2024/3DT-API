@@ -719,6 +719,55 @@ export class Tracking3DClient {
     }
   }
 
+  /**
+   * Aplica varios atributos a la vez (a diferencia de
+   * updateUnitAttribute, que siempre manda un arreglo de un solo
+   * elemento). Misma respuesta plana que update/delete/deallocate.
+   */
+  async updateTrackerAttributes(
+    session: Tracking3DSession,
+    uid: string,
+    updates: Array<{ AttributeId: number; Value: string }>
+  ): Promise<void> {
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId
+    });
+
+    const url =
+      `${this.baseUrl}/devices/tracker/${uid}/attributes/update?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: JSON.stringify(updates)
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking devices/tracker/{Uid}/attributes/update failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    const data = JSON.parse(responseText);
+
+    if (data.Result !== "ok") {
+
+      throw new Error(
+        `3Dtracking devices/tracker/{Uid}/attributes/update failed: ${data.Message || responseText}`
+      );
+    }
+  }
+
   async updateUnitAttribute(
     session: Tracking3DSession,
     uid: string,

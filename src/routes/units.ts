@@ -508,10 +508,12 @@ export default async function unitsRoutes(
   /**
    * DELETE /api/v1/units/:id
    *
-   * Borrado lógico (active: false). 3Dtracking no tiene ningún
-   * endpoint para eliminar unidades, así que esto es puramente local
-   * — no se replica en 3Dtracking. :id acepta imei, plate, externalId
-   * o name (igual que GET /:id).
+   * Borrado físico. 3Dtracking no tiene ningún endpoint para eliminar
+   * unidades, así que esto es puramente local — el registro completo
+   * (beforeState) queda solo en el log de auditoría, como respaldo.
+   * Nota: borra en cascada su historial de posiciones (tabla
+   * Position). :id acepta imei, plate, externalId o name (igual que
+   * GET /:id).
    */
   fastify.delete<{
     Params: UnitParams;
@@ -552,12 +554,11 @@ export default async function unitsRoutes(
           resource: identifier,
           success: true,
           beforeState: result.before,
-          afterState: result.unit,
         });
 
         return reply.send({
           success: true,
-          data: result.unit,
+          data: { ...result.before, deleted: true },
           tracking3d: {
             synced: false,
             message: "3Dtracking no tiene un endpoint para eliminar unidades; el borrado es solo local",

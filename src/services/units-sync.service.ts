@@ -189,18 +189,21 @@ export async function createUnitAndReplicate(
 }
 
 /**
- * Borrado lógico: 3Dtracking no tiene ningún endpoint para eliminar
- * unidades, así que esto es puramente local (active: false). No hay
- * réplica remota posible. Devuelve null si no existe.
+ * Elimina la unidad de verdad (no lógico) de la base local.
+ * 3Dtracking no tiene ningún endpoint para eliminar unidades, así que
+ * no hay réplica remota posible — el registro completo (`before`)
+ * queda solo en el log de auditoría, como respaldo. Nota: borra en
+ * cascada su historial de posiciones (tabla Position, FK con
+ * onDelete: Cascade) — ese historial no se guarda en el log, solo la
+ * unidad misma. Devuelve null si no existe.
  */
 export async function deleteUnitLocal(
   prisma: PrismaClient,
   identifier: string
-): Promise<{ unit: Unit; before: Unit } | null> {
+): Promise<{ before: Unit } | null> {
 
   const existing = await prisma.unit.findFirst({
     where: {
-      active: true,
       OR: [
         { imei: identifier },
         { plate: identifier },
@@ -214,12 +217,11 @@ export async function deleteUnitLocal(
     return null;
   }
 
-  const unit = await prisma.unit.update({
-    where: { id: existing.id },
-    data: { active: false }
+  await prisma.unit.delete({
+    where: { id: existing.id }
   });
 
-  return { unit, before: existing };
+  return { before: existing };
 }
 
 export interface UnitReplicationResult {
