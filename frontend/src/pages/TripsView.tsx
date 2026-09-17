@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { MapContainer, TileLayer, Polyline, CircleMarker, Popup } from "react-leaflet";
+import { MapContainer, TileLayer, Polyline, CircleMarker, Popup, useMap } from "react-leaflet";
+import { LatLngBounds, LatLngTuple } from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 import { apiRequest, ApiError } from "../api/client";
@@ -40,6 +41,35 @@ function formatTime(value: string): string {
 
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * MapContainer de react-leaflet solo usa `center`/`zoom` en el montaje
+ * inicial — cambiarlos en props no mueve el mapa. Por eso al abrir la
+ * ventana (datos todavía no cargados) o al seleccionar otro viaje, el
+ * mapa se quedaba en el centro por defecto. Este componente vive
+ * dentro del MapContainer y usa el mapa real vía useMap() para
+ * reposicionarlo cada vez que cambia el viaje seleccionado.
+ */
+function RecenterOnTrip({ trip }: { trip: Trip | undefined }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!trip || trip.points.length === 0) return;
+
+    if (trip.points.length === 1) {
+      map.setView([trip.points[0].lat, trip.points[0].lng], 15);
+      return;
+    }
+
+    const bounds = new LatLngBounds(
+      trip.points.map((p): LatLngTuple => [p.lat, p.lng])
+    );
+
+    map.fitBounds(bounds, { padding: [40, 40] });
+  }, [map, trip]);
+
+  return null;
 }
 
 export function TripsView() {
@@ -131,6 +161,8 @@ export function TripsView() {
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
+
+            <RecenterOnTrip trip={selectedTrip} />
 
             {selectedTrip && (
               <>
