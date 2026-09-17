@@ -16,6 +16,17 @@ const CURSOR_ID = 1;
 const MAX_PAGES_PER_RUN = 25;
 
 /**
+ * De momento el servicio de envío de WhatsApp solo está dado de alta
+ * para DADA-DADA (uid 2C809B) — no se debe guardar/enviar contactPhone
+ * para otras empresas hasta que se active el servicio para ellas,
+ * aunque ya tengan Company.contactPhone cargado. Si DADA-DADA todavía
+ * no tiene contactPhone cargado, el evento igual se guarda (con
+ * contactPhone null) — el número se agregará después directo en
+ * Company.
+ */
+const WHATSAPP_ENABLED_COMPANY_UIDS = new Set(["2C809B"]);
+
+/**
  * Escanea el stream cronológico de posiciones de 3Dtracking
  * (Data/PositionsList, paginado por StartId, con InputOutputs incluido)
  * contra los tipos de alerta crítica activos que tengan matchSystemName
@@ -117,7 +128,9 @@ export async function scanForCriticalAlerts(
        * query) para las empresas presentes en esta página.
        */
       const companyUidsInPage = [...new Set(
-        [...companyUidByUnit.values()].filter((uid): uid is string => Boolean(uid))
+        [...companyUidByUnit.values()]
+          .filter((uid): uid is string => Boolean(uid))
+          .filter((uid) => WHATSAPP_ENABLED_COMPANY_UIDS.has(uid))
       )];
 
       const companies = companyUidsInPage.length
@@ -173,7 +186,10 @@ export async function scanForCriticalAlerts(
                 unitName: unit.Name || null,
                 unitImei: unit.Imei || null,
                 companyUid,
-                contactPhone: companyUid ? contactPhoneByCompany.get(companyUid) || null : null,
+                contactPhone:
+                  companyUid && WHATSAPP_ENABLED_COMPANY_UIDS.has(companyUid)
+                    ? contactPhoneByCompany.get(companyUid) || null
+                    : null,
                 driverName: position.Driver
                   ? [position.Driver.FirstName, position.Driver.LastName].filter(Boolean).join(" ") || position.Driver.Code || null
                   : null,
