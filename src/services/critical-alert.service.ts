@@ -109,6 +109,28 @@ export async function scanForCriticalAlerts(
         localUnits.map((u) => [u.externalId, u.companyUid])
       );
 
+      /**
+       * Teléfono de contacto de la empresa (Company.contactPhone) —
+       * se guarda en el mismo registro de la alarma para que el
+       * futuro servicio de envío de WhatsApp lo use directo, sin
+       * tener que volver a resolverlo. Se busca en lote (una sola
+       * query) para las empresas presentes en esta página.
+       */
+      const companyUidsInPage = [...new Set(
+        [...companyUidByUnit.values()].filter((uid): uid is string => Boolean(uid))
+      )];
+
+      const companies = companyUidsInPage.length
+        ? await prisma.company.findMany({
+            where: { uid: { in: companyUidsInPage } },
+            select: { uid: true, contactPhone: true }
+          })
+        : [];
+
+      const contactPhoneByCompany = new Map(
+        companies.map((c) => [c.uid, c.contactPhone])
+      );
+
       for (const position of positions) {
 
         const unit = position.Unit;
@@ -141,6 +163,8 @@ export async function scanForCriticalAlerts(
 
           try {
 
+            const companyUid = companyUidByUnit.get(unit.Uid) || null;
+
             await prisma.criticalAlertEvent.create({
               data: {
                 alertTypeCode: alertType.code,
@@ -148,7 +172,8 @@ export async function scanForCriticalAlerts(
                 unitUid: unit.Uid,
                 unitName: unit.Name || null,
                 unitImei: unit.Imei || null,
-                companyUid: companyUidByUnit.get(unit.Uid) || null,
+                companyUid,
+                contactPhone: companyUid ? contactPhoneByCompany.get(companyUid) || null : null,
                 driverName: position.Driver
                   ? [position.Driver.FirstName, position.Driver.LastName].filter(Boolean).join(" ") || position.Driver.Code || null
                   : null,
