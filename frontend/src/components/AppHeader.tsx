@@ -1,26 +1,93 @@
-import { NavLink } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, useLocation } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
 
-const NAV_ITEMS = [
-  { to: "/dashboard", label: "Dashboard" },
-  { to: "/admin/vehiculos", label: "Vehículos" },
-  { to: "/admin/trackers", label: "GPS" },
-  { to: "/admin/sims", label: "SIMs" },
+interface NavItem {
+  to: string;
+  label: string;
+}
+
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
+
+const FLOTAS_GROUP: NavGroup = {
+  label: "Flotas",
+  items: [
+    { to: "/admin/vehiculos", label: "Vehículos" },
+    { to: "/admin/trackers", label: "GPS" },
+    { to: "/admin/sims", label: "SIMs" }
+  ]
+};
+
+const ADMIN_GROUP_ITEMS_BASE: NavItem[] = [
   { to: "/admin/empresas", label: "Empresas" }
 ];
 
-const ROOT_ONLY_NAV_ITEMS = [
-  { to: "/admin/mensajeria", label: "Mensajería" },
-  { to: "/admin/usuarios", label: "Usuarios" }
-];
+const ADMIN_GROUP_ITEM_ROOT_ONLY: NavItem = { to: "/admin/usuarios", label: "Usuarios" };
+
+const MENSAJERIA_ITEM: NavItem = { to: "/admin/mensajeria", label: "Mensajería" };
+
+function NavDropdown({ group }: { group: NavGroup }) {
+  const [open, setOpen] = useState(false);
+  const location = useLocation();
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  const isGroupActive = group.items.some((item) => location.pathname.startsWith(item.to));
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  return (
+    <div className="app-nav-dropdown" ref={rootRef}>
+      <button
+        type="button"
+        className={isGroupActive ? "app-nav-link app-nav-link-active" : "app-nav-link"}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        {group.label}
+        <span className="app-nav-caret">▾</span>
+      </button>
+
+      {open && (
+        <div className="app-nav-dropdown-menu">
+          {group.items.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                isActive ? "app-nav-dropdown-link app-nav-dropdown-link-active" : "app-nav-dropdown-link"
+              }
+              onClick={() => setOpen(false)}
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function AppHeader() {
   const { user, logout } = useAuth();
 
-  const navItems = user?.role === "root"
-    ? [...NAV_ITEMS, ...ROOT_ONLY_NAV_ITEMS]
-    : NAV_ITEMS;
+  const isRoot = user?.role === "root";
+
+  const adminGroup: NavGroup = {
+    label: "Administración",
+    items: isRoot ? [...ADMIN_GROUP_ITEMS_BASE, ADMIN_GROUP_ITEM_ROOT_ONLY] : ADMIN_GROUP_ITEMS_BASE
+  };
 
   return (
     <header className="app-header">
@@ -28,17 +95,28 @@ export function AppHeader() {
         <div className="app-brand">DADA DADA Fleet</div>
 
         <nav className="app-nav">
-          {navItems.map((item) => (
+          <NavLink
+            to="/dashboard"
+            className={({ isActive }) =>
+              isActive ? "app-nav-link app-nav-link-active" : "app-nav-link"
+            }
+          >
+            Dashboard
+          </NavLink>
+
+          <NavDropdown group={FLOTAS_GROUP} />
+          <NavDropdown group={adminGroup} />
+
+          {isRoot && (
             <NavLink
-              key={item.to}
-              to={item.to}
+              to={MENSAJERIA_ITEM.to}
               className={({ isActive }) =>
                 isActive ? "app-nav-link app-nav-link-active" : "app-nav-link"
               }
             >
-              {item.label}
+              {MENSAJERIA_ITEM.label}
             </NavLink>
-          ))}
+          )}
         </nav>
       </div>
 

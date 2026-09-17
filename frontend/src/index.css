@@ -365,6 +365,13 @@ tbody tr:last-child td {
   font-size: 14px;
   color: var(--color-text-muted);
   text-decoration: none;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .app-nav-link:hover {
@@ -373,6 +380,50 @@ tbody tr:last-child td {
 }
 
 .app-nav-link-active {
+  background: var(--color-bg);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.app-nav-caret {
+  font-size: 10px;
+}
+
+.app-nav-dropdown {
+  position: relative;
+}
+
+.app-nav-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 160px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 20;
+}
+
+.app-nav-dropdown-link {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.app-nav-dropdown-link:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.app-nav-dropdown-link-active {
   background: var(--color-bg);
   color: var(--color-primary);
   font-weight: 600;
