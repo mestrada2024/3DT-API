@@ -174,3 +174,79 @@ export interface Tracking3DCreateUnitPayload {
   UnitFunction?: "Personal" | "AssetItem" | "Vehicle" | string;
   TrackerUid?: string;
 }
+
+export interface Tracking3DInputOutput {
+  SystemName: string | null;
+  Description: string | null;
+  UserDescription: string | null;
+  Active: boolean;
+}
+
+export interface Tracking3DDriverRef {
+  Uid: string | null;
+  FirstName: string | null;
+  LastName: string | null;
+  Code: string | null;
+}
+
+export interface Tracking3DPositionDetail {
+  Latitude: number;
+  Longitude: number;
+  Address: string | null;
+  Speed: number;
+  SpeedMeasure: string | null;
+  Heading: number;
+  Ignition: string | null;
+  GPSTimeUtc: string | null;
+  GPSTimeLocal: string | null;
+  ServerTimeUTC: string | null;
+  Driver: Tracking3DDriverRef | null;
+  InputOutputs: Tracking3DInputOutput[] | null;
+}
+
+export interface Tracking3DSensorReading {
+  UnitUid: string | null;
+  Name: string | null;
+  Value: string | null;
+  MeasurementSign: string | null;
+  ReadingTimeLocal: string | null;
+  SensorType: string | null;
+}
+
+export interface Tracking3DUnitLatestPosition {
+  Uid: string;
+  Name: string | null;
+  Imei: string | null;
+  CompanyUid: string | null;
+  LastReportedTimeLocal: string | null;
+  LastReportedTimeUTC: string | null;
+  Position: Tracking3DPositionDetail | null;
+  SensorReadings: Tracking3DSensorReading[] | null;
+}
+export interface Tracking3DUnitRef {
+  Uid: string | null;
+  Name: string | null;
+  Imei: string | null;
+}
+
+export interface Tracking3DPositionListEntry {
+  Unit: Tracking3DUnitRef | null;
+  Latitude: number;
+  Longitude: number;
+  Address: string | null;
+  Speed: number;
+  SpeedMeasure: string | null;
+  Heading: number;
+  Ignition: string | null;
+  GPSTimeUtc: string | null;
+  GPSTimeLocal: string | null;
+  ServerTimeUTC: string | null;
+  Driver: Tracking3DDriverRef | null;
+  InputOutputs: Tracking3DInputOutput[] | null;
+}
+
+export interface Tracking3DPositionListResult {
+  Position: Tracking3DPositionListEntry[] | null;
+  StartId: number | string | null;
+  IsCurrent?: boolean;
+}

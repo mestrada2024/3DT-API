@@ -53,5 +53,24 @@ services:
       timeout: 5s
       retries: 10
 
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      # args:
+      #   VITE_API_BASE_URL: https://api.tudominio.com   # opcional; sin esto,
+      #   el frontend usa automáticamente el mismo host donde se abre la
+      #   página, puerto 3010
+
+    container_name: dms-frontend
+
+    restart: unless-stopped
+
+    ports:
+      - "3000:3000"
+
+    depends_on:
+      - api
+
 volumes:
   mariadb_data:

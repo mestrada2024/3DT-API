@@ -44,8 +44,23 @@ import unitModelRoutes
 import companyRoutes
   from "./routes/companies";
 
+import criticalAlertRoutes
+  from "./routes/critical-alerts";
+
+import messagingRoutes
+  from "./routes/messaging";
+
 import tracking3dPlugin
   from "./plugins/tracking3d";
+
+import criticalAlertSchedulerPlugin
+  from "./plugins/critical-alert-scheduler";
+
+import dmsMessagingPlugin
+  from "./plugins/dms-messaging";
+
+import unitLiveStatusSchedulerPlugin
+  from "./plugins/unit-live-status-scheduler";
 
 
 
@@ -96,6 +111,18 @@ async function start() {
 
   await app.register(
     tracking3dPlugin
+  );
+
+  await app.register(
+    criticalAlertSchedulerPlugin
+  );
+
+  await app.register(
+    dmsMessagingPlugin
+  );
+
+  await app.register(
+    unitLiveStatusSchedulerPlugin
   );
 
 
@@ -150,6 +177,22 @@ async function start() {
     companyRoutes,
     {
       prefix: "/api/v1/tracking"
+    }
+  );
+
+
+  await app.register(
+    criticalAlertRoutes,
+    {
+      prefix: "/api/v1/tracking"
+    }
+  );
+
+
+  await app.register(
+    messagingRoutes,
+    {
+      prefix: "/api/v1"
     }
   );
 

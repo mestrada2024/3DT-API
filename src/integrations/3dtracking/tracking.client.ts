@@ -16,6 +16,27 @@ import {
   Tracking3DCreateUnitPayload
 } from "./tracking.types";
 
+const MONTH_ABBREVIATIONS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+];
+
+/**
+ * 3Dtracking espera "dd MMM yyyy HH:mm:ss" en UTC para
+ * LastDateReceivedUtc (ej: "21 May 2013 18:14:56").
+ */
+export function formatTracking3DDateUtc(date: Date): string {
+
+  const dd = String(date.getUTCDate()).padStart(2, "0");
+  const mmm = MONTH_ABBREVIATIONS[date.getUTCMonth()];
+  const yyyy = date.getUTCFullYear();
+  const HH = String(date.getUTCHours()).padStart(2, "0");
+  const mm = String(date.getUTCMinutes()).padStart(2, "0");
+  const ss = String(date.getUTCSeconds()).padStart(2, "0");
+
+  return `${dd} ${mmm} ${yyyy} ${HH}:${mm}:${ss}`;
+}
+
 export class Tracking3DClient {
 
   private readonly baseUrl: string;
@@ -827,7 +848,9 @@ export class Tracking3DClient {
     }
   }
 
-  async getLatestPositions(): Promise<any> {
+  async getLatestPositions(
+    options?: { lastDateReceivedUtc?: Date }
+  ): Promise<any> {
 
     const session =
       await this.authenticate();
@@ -836,6 +859,14 @@ export class Tracking3DClient {
       UserIdGuid: session.userIdGuid,
       SessionId: session.sessionId
     });
+
+    if (options?.lastDateReceivedUtc) {
+
+      params.set(
+        "LastDateReceivedUtc",
+        formatTracking3DDateUtc(options.lastDateReceivedUtc)
+      );
+    }
 
     const url =
       `${this.baseUrl}/Units/LatestPositionsList?${params.toString()}`;
@@ -858,9 +889,11 @@ export class Tracking3DClient {
       );
     }
 
+    let data: any;
+
     try {
 
-      return JSON.parse(responseText);
+      data = JSON.parse(responseText);
 
     } catch {
 
@@ -868,5 +901,97 @@ export class Tracking3DClient {
         `Invalid JSON from LatestPositionsList: ${responseText}`
       );
     }
+
+    if (data?.Status?.Result && data.Status.Result !== "ok") {
+
+      throw new Error(
+        `3Dtracking Units/LatestPositionsList failed: ${data.Status.Message || data.Status.ErrorCode}`
+      );
+    }
+
+    return data;
+  }
+
+  /**
+   * Data/PositionsList: stream cronológico (todas las unidades) paginado
+   * por StartId, a diferencia de Units/LatestPositionsList (solo la
+   * posición más reciente por unidad). Necesario para no perder señales
+   * puntuales como el botón de pánico, que 3Dtracking reporta como
+   * Active:true solo en el mensaje exacto del evento y luego vuelve a
+   * Active:false en el siguiente reporte de posición.
+   */
+  async getPositionsList(
+    options: {
+      startId?: string;
+      uid?: string;
+      includeInputOutputs?: boolean;
+    } = {}
+  ): Promise<any> {
+
+    const session =
+      await this.authenticate();
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId
+    });
+
+    if (options.startId !== undefined) {
+      params.set("StartId", options.startId);
+    }
+
+    if (options.uid) {
+      params.set("Uid", options.uid);
+    }
+
+    if (options.includeInputOutputs !== undefined) {
+      params.set(
+        "IncludeInputOutputs",
+        options.includeInputOutputs ? "true" : "false"
+      );
+    }
+
+    const url =
+      `${this.baseUrl}/data/positionslist?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking data/positionslist failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    let data: any;
+
+    try {
+
+      data = JSON.parse(responseText);
+
+    } catch {
+
+      throw new Error(
+        `Invalid JSON from data/positionslist: ${responseText}`
+      );
+    }
+
+    if (data?.Status?.Result && data.Status.Result !== "ok") {
+
+      throw new Error(
+        `3Dtracking data/positionslist failed: ${data.Status.Message || data.Status.ErrorCode}`
+      );
+    }
+
+    return data;
   }
 }
