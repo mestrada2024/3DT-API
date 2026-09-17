@@ -16,6 +16,23 @@ model User {
   updatedAt    DateTime @updatedAt
 }
 
+/**
+ * Empresas asignadas a un usuario (root ve todo, no necesita filas
+ * acá). Solo usuarios con rol root pueden crear/editar estas
+ * asignaciones. Sin relación formal a User/Company — mismo estilo que
+ * el resto del esquema (Sim.trackerUid, Unit.companyUid, etc.), UIDs
+ * de texto en vez de relaciones de Prisma.
+ */
+model UserCompany {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  companyUid String
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, companyUid])
+  @@index([companyUid])
+}
+
 model Unit {
   id             Int        @id @default(autoincrement())
   trackingId     BigInt?    @unique
@@ -48,9 +65,11 @@ model Position {
   speed      Decimal? @db.Decimal(10, 2)
   heading    Decimal? @db.Decimal(10, 2)
   mileage    Decimal? @db.Decimal(12, 2)
+  ignition   String?
   recordedAt DateTime
   unit       Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
 
+  @@unique([unitId, recordedAt])
   @@index([recordedAt])
   @@index([unitId, recordedAt])
 }
@@ -174,8 +193,26 @@ model CriticalAlertType {
   description     String?
   matchSystemName String?
   active          Boolean  @default(true)
+  notifyWhatsapp  Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+/**
+ * Configuración (una sola fila) del envío de WhatsApp disparado por
+ * alertas críticas — ver docs/dms-messaging.md y
+ * CriticalAlertType.notifyWhatsapp. templateId queda null hasta tener
+ * la plantilla real aprobada por DMS SMART.
+ */
+model WhatsappAlertConfig {
+  id            Int      @id @default(1)
+  accountId     String?
+  channelId     String?
+  templateId    String?
+  templateLabel String?
+  templateText  String?  @db.Text
+  active        Boolean  @default(false)
+  updatedAt     DateTime @updatedAt
 }
 
 model CriticalAlertEvent {
@@ -205,4 +242,11 @@ model CriticalAlertScanCursor {
   id        Int      @id @default(1)
   startId   BigInt
   updatedAt DateTime @updatedAt
+}
+
+model UnitLiveStatusCursor {
+  id               Int      @id @default(1)
+  positionsStartId BigInt?
+  sensorsStartId   BigInt?
+  updatedAt        DateTime @updatedAt
 }

@@ -90,6 +90,14 @@ a propósito: cada llamador decide qué cuenta/canal/plantilla usar
 según el caso (ver sección 3 del documento fuente para cómo obtener
 `templateId` desde el panel de plantillas de DMS SMART).
 
+Dos campos adicionales, **no documentados en el PDF fuente** pero
+confirmados por el usuario directamente con DMS SMART:
+
+| Campo       | Notas                                                                 |
+|-------------|------------------------------------------------------------------------|
+| `type`      | `"notification"` permite enviar el mensaje aunque ya haya una conversación en curso con ese número — evita el `403 "Conversation in progress"` del envío normal. |
+| `track_id`  | ID de seguimiento de la campaña (según el comentario del ejemplo original) — probablemente un string libre que uno mismo genera para correlacionar el envío en sus propios sistemas; formato exacto sin confirmar. |
+
 ### Ejemplo
 
 ```bash

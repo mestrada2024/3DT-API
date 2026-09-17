@@ -19,6 +19,29 @@ export async function syncUnitsFromTracking3D(
 
   const units = await tracking3d.getUnitsList(session);
 
+  /**
+   * 3Dtracking no expone el tracker asignado directamente en el
+   * detalle de la unidad — pero el campo IMEI de la unidad SÍ es el
+   * IMEI del tracker instalado (confirmado con datos reales: 350 de
+   * 355 unidades tienen un Tracker local con el mismo imei). Antes
+   * este sync no resolvía esa relación en absoluto, así que
+   * Unit.trackerUid solo quedaba lleno para las pocas unidades
+   * asignadas manualmente desde nuestra propia API — el resto
+   * aparecía sin GPS aunque sí lo tuvieran en 3Dtracking. Se resuelve
+   * una sola vez acá (no por unidad) para no hacer cientos de queries
+   * sueltas.
+   */
+  const trackersWithImei = await prisma.tracker.findMany({
+    where: { imei: { not: null } },
+    select: { imei: true, uid: true }
+  });
+
+  const trackerUidByImei = new Map(
+    trackersWithImei
+      .filter((tracker) => tracker.uid)
+      .map((tracker) => [tracker.imei as string, tracker.uid as string])
+  );
+
   let created = 0;
   let updated = 0;
   let skipped = 0;
@@ -28,14 +51,31 @@ export async function syncUnitsFromTracking3D(
     try {
       const detail = await tracking3d.getUnitDetail(session, unit.Uid);
 
-      if (!detail.IMEI || !/^\d+$/.test(detail.IMEI)) {
-        skipped++;
-        continue;
-      }
+      /**
+       * detail.IMEI no siempre es un IMEI numérico real: las unidades
+       * tipo app (UnitType "3DtrackApp", ej. "Telefono Mauricio") y
+       * algunas otras usan un GUID u otro identificador de texto ahí.
+       * trackingId es BigInt, así que solo se puede llenar cuando el
+       * valor es numérico — antes esto hacía que la unidad completa se
+       * saltara (bug real: ocultaba ~16 unidades del listado, incluidas
+       * todas las "Telefono *"). Ahora se guarda igual, con
+       * trackingId null cuando no aplica.
+       */
+      const imei =
+        detail.IMEI && detail.IMEI.trim()
+          ? detail.IMEI.trim()
+          : null;
+
+      const trackingId =
+        imei && /^\d+$/.test(imei)
+          ? BigInt(imei)
+          : null;
 
       const plateAttribute = detail.AdditionalDetails.Attributes.find(
         (attribute) => attribute.Name === "Placa"
       );
+
+      const trackerUid = imei ? trackerUidByImei.get(imei) || null : null;
 
       const result = await prisma.unit.upsert({
         where: {
@@ -43,8 +83,9 @@ export async function syncUnitsFromTracking3D(
         },
         create: {
           externalId: detail.Uid,
-          trackingId: BigInt(detail.IMEI),
-          imei: detail.IMEI,
+          trackingId,
+          imei,
+          trackerUid,
           name: detail.Name,
           companyUid: detail.CompanyUid || null,
           companyName: detail.CompanyName || null,
@@ -52,8 +93,9 @@ export async function syncUnitsFromTracking3D(
           status: detail.Status || "unknown"
         },
         update: {
-          trackingId: BigInt(detail.IMEI),
-          imei: detail.IMEI,
+          trackingId,
+          imei,
+          trackerUid,
           name: detail.Name,
           companyUid: detail.CompanyUid || null,
           companyName: detail.CompanyName || null,

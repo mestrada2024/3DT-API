@@ -51,7 +51,7 @@ export function Login() {
   return (
     <div className="auth-page">
       <form className="auth-card" onSubmit={handleSubmit}>
-        <div className="auth-brand">DMS Fleet</div>
+        <div className="auth-brand">DADA DADA Fleet</div>
         <h1>Iniciar sesión</h1>
 
         <label className="field">

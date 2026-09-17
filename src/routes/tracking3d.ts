@@ -18,6 +18,22 @@ import {
   getActorFromRequest
 } from "../services/audit-log.service";
 
+import { parseSort } from "../utils/sort";
+
+import {
+  getAllowedCompanyUids,
+  getAllowedTrackerUids,
+  requireWrite
+} from "../services/access-control.service";
+
+const SIM_SORTABLE_FIELDS = [
+  "iccid",
+  "phoneNumber",
+  "trackerUid",
+  "syncStatus",
+  "createdAt"
+] as const;
+
 interface CreateSimBody {
   iccid?: string;
   phoneNumber?: string;
@@ -47,6 +63,9 @@ interface SimsListQuery {
   search?: string;
   active?: string;
   syncStatus?: string;
+  unassigned?: string;
+  sortBy?: string;
+  sortDir?: string;
 }
 
 const MAX_SIMS_PER_IMPORT = 500;
@@ -279,6 +298,7 @@ const trackingRoutes:
           const where: {
             active: boolean;
             syncStatus?: string;
+            trackerUid?: null | { in: string[] };
             OR?: Array<{
               iccid?: { contains: string };
               phoneNumber?: { contains: string };
@@ -295,6 +315,33 @@ const trackingRoutes:
             where.syncStatus = request.query.syncStatus;
           }
 
+          /**
+           * root ve todos los SIMs; admin/user solo los asignados a un
+           * tracker de una unidad de sus empresas (UserCompany) — los
+           * SIMs sin asignar no tienen empresa asociada, así que
+           * quedan fuera del alcance de admin/user (por eso, si además
+           * pide ?unassigned=true, no puede haber resultados posibles
+           * para ellos).
+           */
+          const allowedCompanyUids = await getAllowedCompanyUids(
+            app.prisma,
+            request.user.sub,
+            request.user.role
+          );
+
+          if (request.query.unassigned === "true") {
+
+            where.trackerUid = allowedCompanyUids !== null
+              ? { in: [] }
+              : null;
+
+          } else if (allowedCompanyUids !== null) {
+
+            where.trackerUid = {
+              in: await getAllowedTrackerUids(app.prisma, allowedCompanyUids)
+            };
+          }
+
           if (request.query.search) {
             const search = request.query.search.trim();
 
@@ -307,13 +354,20 @@ const trackingRoutes:
             }
           }
 
+          const { field: sortField, direction: sortDirection } = parseSort(
+            request.query.sortBy,
+            request.query.sortDir,
+            SIM_SORTABLE_FIELDS,
+            "iccid"
+          );
+
           const [sims, total] =
             await Promise.all([
               app.prisma.sim.findMany({
                 where,
                 skip,
                 take: limit,
-                orderBy: { id: "asc" }
+                orderBy: { [sortField]: sortDirection }
               }),
 
               app.prisma.sim.count({
@@ -321,11 +375,41 @@ const trackingRoutes:
               })
             ]);
 
+          /**
+           * Sim.trackerUid guarda el Tracker.uid (no el nombre) — se
+           * busca el nombre de los trackers referenciados en esta
+           * página para no obligar al frontend a resolverlo con N
+           * llamados aparte.
+           */
+          const trackerUids = [...new Set(
+            sims
+              .map((sim) => sim.trackerUid)
+              .filter((uid): uid is string => Boolean(uid))
+          )];
+
+          const trackers = trackerUids.length
+            ? await app.prisma.tracker.findMany({
+                where: { uid: { in: trackerUids } },
+                select: { uid: true, name: true }
+              })
+            : [];
+
+          const trackerNameByUid = new Map(
+            trackers.map((tracker) => [tracker.uid, tracker.name])
+          );
+
+          const simsWithTrackerName = sims.map((sim) => ({
+            ...sim,
+            trackerName: sim.trackerUid
+              ? trackerNameByUid.get(sim.trackerUid) || null
+              : null
+          }));
+
           return reply.send({
 
             success: true,
 
-            data: sims,
+            data: simsWithTrackerName,
 
             pagination: {
               page,
@@ -477,9 +561,10 @@ const trackingRoutes:
     app.post(
       "/sims/sync",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },
@@ -542,9 +627,10 @@ const trackingRoutes:
     }>(
       "/sims",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },
@@ -716,9 +802,10 @@ const trackingRoutes:
     }>(
       "/sims/import",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },
@@ -849,9 +936,10 @@ const trackingRoutes:
     }>(
       "/sims/:id",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },
@@ -1013,9 +1101,10 @@ const trackingRoutes:
     }>(
       "/sims/:id",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },

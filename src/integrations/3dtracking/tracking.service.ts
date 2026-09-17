@@ -37,6 +37,13 @@ export class Tracking3DService {
     return this.client.getPositionsList(options);
   }
 
+  async getSensorReadingsList(
+    options?: { startId?: string; uid?: string }
+  ) {
+
+    return this.client.getSensorReadingsList(options);
+  }
+
   async getUnitsList(session: Tracking3DSession) {
 
     return this.client.getUnitsList(session);

@@ -6,6 +6,17 @@ import {
   scanForCriticalAlerts
 } from "../services/critical-alert.service";
 
+import { requireRoot } from "../services/access-control.service";
+
+interface CriticalAlertIdParams {
+  id: string;
+}
+
+interface UpdateCriticalAlertBody {
+  notifyWhatsapp?: boolean;
+  active?: boolean;
+}
+
 interface CriticalAlertsListQuery {
   page?: string;
   limit?: string;
@@ -337,6 +348,88 @@ const criticalAlertRoutes:
 
         }
 
+      }
+    );
+
+    /**
+     * PATCH /api/v1/tracking/critical-alerts/:id
+     *
+     * Activa/desactiva el envío por WhatsApp de un tipo de alerta
+     * (notifyWhatsapp) y/o si está activa en el escaneo (active). Es
+     * una configuración global de la cuenta (no por empresa), por eso
+     * requiere rol root — ver docs/dms-messaging.md.
+     */
+    app.patch<{
+      Params: CriticalAlertIdParams;
+      Body: UpdateCriticalAlertBody;
+    }>(
+      "/critical-alerts/:id",
+      {
+        preHandler: async (request, reply) => {
+
+          await request.jwtVerify();
+          await requireRoot(request, reply);
+
+        }
+      },
+      async (request, reply) => {
+
+        try {
+
+          const id = parseInt(request.params.id, 10);
+
+          if (isNaN(id)) {
+            return reply
+              .code(400)
+              .send({
+                success: false,
+                error: "INVALID_ID",
+                message: "id inválido"
+              });
+          }
+
+          const data: { notifyWhatsapp?: boolean; active?: boolean } = {};
+
+          if (request.body.notifyWhatsapp !== undefined) {
+            data.notifyWhatsapp = request.body.notifyWhatsapp;
+          }
+
+          if (request.body.active !== undefined) {
+            data.active = request.body.active;
+          }
+
+          const updated = await app.prisma.criticalAlertType.update({
+            where: { id },
+            data
+          });
+
+          return reply.send({
+            success: true,
+            data: updated
+          });
+
+        } catch (error: any) {
+
+          if (error?.code === "P2025") {
+            return reply
+              .code(404)
+              .send({
+                success: false,
+                error: "NOT_FOUND",
+                message: "Tipo de alerta no encontrado"
+              });
+          }
+
+          app.log.error(error);
+
+          return reply
+            .code(500)
+            .send({
+              success: false,
+              error: "INTERNAL_SERVER_ERROR",
+              message: "Error actualizando el tipo de alerta"
+            });
+        }
       }
     );
 

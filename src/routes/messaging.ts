@@ -11,6 +11,19 @@ import {
   logAction
 } from "../services/audit-log.service";
 
+import { requireRoot } from "../services/access-control.service";
+
+interface UpdateAlertConfigBody {
+  accountId?: string;
+  channelId?: string;
+  templateId?: string;
+  templateLabel?: string;
+  templateText?: string;
+  active?: boolean;
+}
+
+const ALERT_CONFIG_ID = 1;
+
 /**
  * POST /api/v1/messaging/send: envío de plantillas de WhatsApp vía el
  * endpoint de campaña saliente de DMS SMART (ver docs/dms-messaging.md).
@@ -88,6 +101,136 @@ const messagingRoutes:
               success: false,
               error: "DMS_MESSAGING_ERROR",
               message: "No se pudo conectar con la API de mensajería"
+            });
+        }
+      }
+    );
+
+    /**
+     * GET /api/v1/messaging/alert-config
+     *
+     * Configuración (una sola fila) de la plantilla de WhatsApp usada
+     * para notificar alertas críticas — ver
+     * CriticalAlertType.notifyWhatsapp y docs/dms-messaging.md. Root
+     * únicamente: incluye accountId/channelId, configuración global de
+     * la cuenta, no por empresa.
+     */
+    app.get(
+      "/messaging/alert-config",
+      {
+        preHandler: async (request, reply) => {
+
+          await request.jwtVerify();
+          await requireRoot(request, reply);
+
+        }
+      },
+      async (request, reply) => {
+
+        try {
+
+          const config = await app.prisma.whatsappAlertConfig.findUnique({
+            where: { id: ALERT_CONFIG_ID }
+          });
+
+          return reply.send({
+            success: true,
+            data: config || {
+              id: ALERT_CONFIG_ID,
+              accountId: null,
+              channelId: null,
+              templateId: null,
+              templateLabel: null,
+              templateText: null,
+              active: false
+            }
+          });
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          return reply
+            .code(500)
+            .send({
+              success: false,
+              error: "INTERNAL_SERVER_ERROR",
+              message: "Error obteniendo la configuración de plantilla"
+            });
+        }
+      }
+    );
+
+    /**
+     * PUT /api/v1/messaging/alert-config
+     *
+     * Crea/actualiza la configuración. templateId puede quedar null
+     * hasta tener la plantilla real aprobada por DMS SMART — active
+     * debería quedar en false mientras tanto (no hay wiring automático
+     * de envío todavía, esto solo guarda la configuración).
+     */
+    app.put<{
+      Body: UpdateAlertConfigBody;
+    }>(
+      "/messaging/alert-config",
+      {
+        preHandler: async (request, reply) => {
+
+          await request.jwtVerify();
+          await requireRoot(request, reply);
+
+        }
+      },
+      async (request, reply) => {
+
+        const actor = getActorFromRequest(request);
+
+        try {
+
+          const before = await app.prisma.whatsappAlertConfig.findUnique({
+            where: { id: ALERT_CONFIG_ID }
+          });
+
+          const data = {
+            accountId: request.body.accountId?.trim() || null,
+            channelId: request.body.channelId?.trim() || null,
+            templateId: request.body.templateId?.trim() || null,
+            templateLabel: request.body.templateLabel?.trim() || null,
+            templateText: request.body.templateText?.trim() || null,
+            active: request.body.active ?? false
+          };
+
+          const updated = await app.prisma.whatsappAlertConfig.upsert({
+            where: { id: ALERT_CONFIG_ID },
+            create: { id: ALERT_CONFIG_ID, ...data },
+            update: data
+          });
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "messaging",
+            action: "update-alert-config",
+            resource: "alert-config",
+            success: true,
+            beforeState: before,
+            afterState: updated
+          });
+
+          return reply.send({
+            success: true,
+            data: updated
+          });
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          return reply
+            .code(500)
+            .send({
+              success: false,
+              error: "INTERNAL_SERVER_ERROR",
+              message: "Error guardando la configuración de plantilla"
             });
         }
       }

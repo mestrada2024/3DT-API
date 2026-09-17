@@ -25,11 +25,31 @@ import {
   getActorFromRequest
 } from "../services/audit-log.service";
 
+import { parseSort } from "../utils/sort";
+
+import {
+  getAllowedCompanyUids,
+  getAllowedTrackerUids,
+  requireWrite
+} from "../services/access-control.service";
+
+const TRACKER_SORTABLE_FIELDS = [
+  "name",
+  "uid",
+  "imei",
+  "unitModelName",
+  "trackerTypeName",
+  "syncStatus",
+  "createdAt"
+] as const;
+
 interface TrackersListQuery {
   page?: string;
   limit?: string;
   search?: string;
   active?: string;
+  sortBy?: string;
+  sortDir?: string;
 }
 
 interface TrackerUidParams {
@@ -114,6 +134,7 @@ const trackerRoutes:
 
           const where: {
             active: boolean;
+            uid?: { in: string[] };
             OR?: Array<{
               uid?: { contains: string };
               name?: { contains: string };
@@ -127,6 +148,23 @@ const trackerRoutes:
                 ? false
                 : true
           };
+
+          /**
+           * root ve todos los trackers; admin/user solo los asignados
+           * a una unidad de sus empresas (UserCompany) — trackers sin
+           * unidad asignada quedan fuera de su alcance.
+           */
+          const allowedCompanyUids = await getAllowedCompanyUids(
+            app.prisma,
+            request.user.sub,
+            request.user.role
+          );
+
+          if (allowedCompanyUids !== null) {
+            where.uid = {
+              in: await getAllowedTrackerUids(app.prisma, allowedCompanyUids)
+            };
+          }
 
           if (request.query.search) {
             const search = request.query.search.trim();
@@ -142,13 +180,20 @@ const trackerRoutes:
             }
           }
 
+          const { field: sortField, direction: sortDirection } = parseSort(
+            request.query.sortBy,
+            request.query.sortDir,
+            TRACKER_SORTABLE_FIELDS,
+            "name"
+          );
+
           const [trackers, total] =
             await Promise.all([
               app.prisma.tracker.findMany({
                 where,
                 skip,
                 take: limit,
-                orderBy: { id: "asc" }
+                orderBy: { [sortField]: sortDirection }
               }),
 
               app.prisma.tracker.count({
@@ -156,11 +201,44 @@ const trackerRoutes:
               })
             ]);
 
+          /**
+           * Tracker.simUid guarda el Sim.externalId (no el teléfono) —
+           * se busca el teléfono de los SIMs referenciados en esta
+           * página para no obligar al frontend a resolverlo con N
+           * llamados aparte.
+           */
+          const simExternalIds = [...new Set(
+            trackers
+              .map((tracker) => tracker.simUid)
+              .filter((uid): uid is string => Boolean(uid))
+          )];
+
+          const sims = simExternalIds.length
+            ? await app.prisma.sim.findMany({
+                where: { externalId: { in: simExternalIds } },
+                select: { externalId: true, phoneNumber: true, iccid: true }
+              })
+            : [];
+
+          const simByExternalId = new Map(
+            sims.map((sim) => [sim.externalId, sim])
+          );
+
+          const trackersWithSimPhone = trackers.map((tracker) => {
+            const sim = tracker.simUid ? simByExternalId.get(tracker.simUid) : undefined;
+
+            return {
+              ...tracker,
+              simPhoneNumber: sim?.phoneNumber || null,
+              simIccid: sim?.iccid || null
+            };
+          });
+
           return reply.send({
 
             success: true,
 
-            data: trackers,
+            data: trackersWithSimPhone,
 
             pagination: {
               page,
@@ -217,9 +295,10 @@ const trackerRoutes:
     }>(
       "/trackers",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },
@@ -463,9 +542,10 @@ const trackerRoutes:
     }>(
       "/trackers/:id/apply-config",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },
@@ -618,9 +698,10 @@ const trackerRoutes:
     }>(
       "/trackers/:id/capture-config-template",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },
@@ -753,9 +834,10 @@ const trackerRoutes:
     }>(
       "/trackers/:id/copy-config",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },
@@ -912,9 +994,10 @@ const trackerRoutes:
     }>(
       "/trackers/:id",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },
@@ -1104,9 +1187,10 @@ const trackerRoutes:
     }>(
       "/trackers/:id/sim",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },
@@ -1284,9 +1368,10 @@ const trackerRoutes:
     }>(
       "/trackers/:id/sim",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },
@@ -1442,9 +1527,10 @@ const trackerRoutes:
     }>(
       "/trackers/:id",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },
@@ -1565,9 +1651,10 @@ const trackerRoutes:
     app.post(
       "/trackers/sync",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireWrite(request, reply);
 
         }
       },

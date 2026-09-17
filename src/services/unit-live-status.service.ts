@@ -1,86 +1,293 @@
 import { PrismaClient } from "@prisma/client";
 
 import { Tracking3DService } from "../integrations/3dtracking/tracking.service";
-import { Tracking3DUnitLatestPosition } from "../integrations/3dtracking/tracking.types";
+import {
+  Tracking3DPositionListEntry,
+  Tracking3DSensorReadingListEntry
+} from "../integrations/3dtracking/tracking.types";
 
 export interface UnitLiveStatusSyncResult {
+  positionsPagesProcessed: number;
   positionsChecked: number;
-  updated: number;
-  skipped: number;
+  positionsUpdated: number;
+  sensorPagesProcessed: number;
+  sensorReadingsChecked: number;
+  batteryUpdated: number;
+}
+
+const CURSOR_ID = 1;
+/**
+ * Bajo a propósito (vs. las 25 páginas de critical-alert.service.ts):
+ * acá hay DOS streams por corrida (posiciones + sensores), y cada
+ * página implica cientos/miles de UPDATE individuales a Unit —
+ * confirmado en pruebas reales que con un cap más alto (5, luego 25)
+ * una sola corrida podía tardar varios minutos solo en posiciones
+ * (miles de updates secuenciales con reintentos), sin llegar nunca al
+ * stream de batería dentro del intervalo de 60s. Con 1 página por
+ * corrida, cada intervalo procesa una porción acotada de cada stream
+ * y ambos avanzan de forma pareja hasta alcanzar el presente — toma
+ * más ciclos en ponerse al día, pero nunca deja a uno de los dos sin
+ * turno.
+ */
+const MAX_PAGES_PER_RUN = 1;
+const BATTERY_SENSOR_TYPE = "Batería";
+const BATTERY_MEASUREMENT_SIGN = "%";
+const MAX_UPDATE_RETRIES = 3;
+
+/**
+ * Actualiza una unidad con reintentos ante el error transitorio de
+ * MariaDB 1020 ("Record has changed since last read") — se observó en
+ * pruebas reales que, con muchas actualizaciones secuenciales seguidas
+ * sobre la misma tabla (una por unidad en cada página del stream), el
+ * driver @prisma/adapter-mariadb puede devolver este error de forma
+ * intermitente. Sin este reintento, UNA sola fila con este error
+ * detenía el resto del lote completo (la excepción se propagaba fuera
+ * del for-loop), dejando cientos de unidades sin actualizar — así se
+ * vio en producción: "Telefono Mauricio" transmitiendo en 3Dtracking
+ * pero sin datos en el dashboard, porque el primer error del lote
+ * abortaba todo lo que venía después.
+ *
+ * P2025 (registro no encontrado — unidad aún no sincronizada por el
+ * catálogo) se sigue tratando aparte, sin reintentar: no es
+ * transitorio.
+ */
+type UpdateOutcome =
+  | { outcome: "updated"; unitId: number }
+  | { outcome: "not_found" };
+
+async function updateUnitWithRetry(
+  prisma: PrismaClient,
+  externalId: string,
+  data: Parameters<PrismaClient["unit"]["update"]>[0]["data"]
+): Promise<UpdateOutcome> {
+
+  for (let attempt = 1; attempt <= MAX_UPDATE_RETRIES; attempt++) {
+
+    try {
+
+      const updated = await prisma.unit.update({
+        where: { externalId },
+        data,
+        select: { id: true }
+      });
+
+      return { outcome: "updated", unitId: updated.id };
+
+    } catch (error) {
+
+      const code = (error as { code?: string })?.code;
+
+      if (code === "P2025") {
+        return { outcome: "not_found" };
+      }
+
+      const isTransient =
+        (error as { meta?: { driverAdapterError?: { cause?: { originalCode?: number } } } })
+          ?.meta?.driverAdapterError?.cause?.originalCode === 1020;
+
+      if (!isTransient || attempt === MAX_UPDATE_RETRIES) {
+        throw error;
+      }
+    }
+  }
+
+  return { outcome: "not_found" };
 }
 
 /**
- * Actualiza, para cada unidad YA conocida localmente (creada vía
- * sync de catálogo o POST /units), su última posición/telemetría:
- * latitude/longitude/speed, lastPositionAt ("hora de transmisión",
- * de LastReportedTimeUTC) y batteryLevel (de SensorReadings, entrada
- * con SensorType "Batería" — confirmado con datos reales).
+ * Actualiza, para cada unidad YA conocida localmente (creada vía sync
+ * de catálogo o POST /units), su posición y batería más recientes.
  *
- * Usa Units/LatestPositionsList (a diferencia del escaneo de alertas
- * críticas, que usa Data/PositionsList) porque es el único endpoint
- * que expone SensorReadings — no hace falta el detalle mensaje-por-
- * mensaje acá, solo el estado más reciente por unidad. Se corre en un
- * intervalo controlado (ver unit-live-status-scheduler.ts) para no
- * repetir el problema de límite de tasa ya visto con este mismo
- * endpoint cuando se llamaba con mucha frecuencia.
+ * Usa dos streams cronológicos paginados por StartId (mismo mecanismo
+ * que critical-alert.service.ts, con su propio cursor independiente en
+ * UnitLiveStatusCursor):
+ * - Data/PositionsList → latitude/longitude/speed/lastPositionAt
+ *   ("hora de transmisión", de GPSTimeUtc/ServerTimeUTC).
+ * - Data/SensorReadingsList → batteryLevel.
+ *
+ * Antes esto usaba Units/LatestPositionsList (que sí trae ambas cosas
+ * en un solo llamado), pero ese endpoint quedó bloqueado por límite de
+ * tasa (429) repetidamente en pruebas reales — dejando esta
+ * sincronización sin actualizar nada, con datos "sin transmitir /sin
+ * batería" en el dashboard aunque la unidad sí estuviera transmitiendo
+ * en 3Dtracking. Ninguno de los dos streams usados acá mostró ese
+ * problema.
+ *
+ * Para batería: solo se toman lecturas con SensorType "Batería" Y
+ * MeasurementSign "%" — el mismo SensorType también se usa para
+ * voltaje ("Batería Externa"/interna en voltios en algunos
+ * dispositivos), que no es un porcentaje y mostraría números sin
+ * sentido en el dashboard si se guardara tal cual.
  *
  * Unidades que no existen aún localmente se ignoran (no crea filas
- * nuevas — Unit.externalId no admite valores parciales/sin los demás
- * campos requeridos; para eso está el sync de catálogo).
+ * nuevas — para eso está el sync de catálogo, POST /units/sync).
  */
 export async function syncUnitLiveStatus(
   prisma: PrismaClient,
   tracking3d: Tracking3DService
 ): Promise<UnitLiveStatusSyncResult> {
 
-  const raw = await tracking3d.getLatestPositions();
-  const positions: Tracking3DUnitLatestPosition[] = raw?.Result || [];
+  const cursor = await prisma.unitLiveStatusCursor.findUnique({
+    where: { id: CURSOR_ID }
+  });
 
-  let updated = 0;
-  let skipped = 0;
+  const result: UnitLiveStatusSyncResult = {
+    positionsPagesProcessed: 0,
+    positionsChecked: 0,
+    positionsUpdated: 0,
+    sensorPagesProcessed: 0,
+    sensorReadingsChecked: 0,
+    batteryUpdated: 0
+  };
 
-  for (const unit of positions) {
+  // ---------- Posiciones (lastPositionAt, lat/lon, speed) ----------
 
-    const batteryReading = unit.SensorReadings?.find(
-      (reading) => reading.SensorType === "Batería" || reading.Name === "Bateria"
-    );
+  let positionsStartId = cursor?.positionsStartId?.toString();
 
-    const batteryLevel = batteryReading?.Value
-      ? parseFloat(batteryReading.Value)
-      : null;
+  for (let page = 0; page < MAX_PAGES_PER_RUN; page++) {
 
-    const lastPositionAt = unit.LastReportedTimeUTC
-      ? new Date(unit.LastReportedTimeUTC)
-      : null;
+    const raw = await tracking3d.getPositionsList({
+      startId: positionsStartId
+    });
 
-    try {
+    const positions: Tracking3DPositionListEntry[] = raw?.Result?.Position || [];
+    const newStartId: string | undefined =
+      raw?.Result?.StartId !== undefined && raw?.Result?.StartId !== null
+        ? String(raw.Result.StartId)
+        : undefined;
 
-      await prisma.unit.update({
-        where: { externalId: unit.Uid },
-        data: {
-          latitude: unit.Position?.Latitude ?? null,
-          longitude: unit.Position?.Longitude ?? null,
-          speed: unit.Position?.Speed ?? null,
-          batteryLevel: batteryLevel !== null && !isNaN(batteryLevel) ? batteryLevel : null,
-          lastPositionAt
-        }
+    result.positionsPagesProcessed++;
+    result.positionsChecked += positions.length;
+
+    for (const position of positions) {
+
+      const unit = position.Unit;
+
+      if (!unit?.Uid) {
+        continue;
+      }
+
+      const occurredAtRaw = position.GPSTimeUtc || position.ServerTimeUTC;
+
+      const outcome = await updateUnitWithRetry(prisma, unit.Uid, {
+        latitude: position.Latitude ?? null,
+        longitude: position.Longitude ?? null,
+        speed: position.Speed ?? null,
+        lastPositionAt: occurredAtRaw ? new Date(occurredAtRaw) : null
       });
 
-      updated++;
+      if (outcome.outcome === "updated") {
 
-    } catch (error) {
+        result.positionsUpdated++;
 
-      if ((error as { code?: string })?.code === "P2025") {
-        skipped++;
-      } else {
-        throw error;
+        /**
+         * Historial local en Position — necesario para calcular
+         * tiempo en viaje/ralentí/transmitiendo-apagado en el
+         * dashboard (ver dashboard.service.ts) sin tener que volver a
+         * consultar 3Dtracking por cada carga de pantalla. Antes esta
+         * tabla existía en el esquema pero nada la llenaba.
+         */
+        if (occurredAtRaw) {
+
+          try {
+
+            await prisma.position.create({
+              data: {
+                unitId: outcome.unitId,
+                latitude: position.Latitude,
+                longitude: position.Longitude,
+                speed: position.Speed ?? null,
+                heading: position.Heading ?? null,
+                ignition: position.Ignition ?? null,
+                recordedAt: new Date(occurredAtRaw)
+              }
+            });
+
+          } catch (error) {
+            if ((error as { code?: string })?.code !== "P2002") {
+              throw error;
+            }
+          }
+        }
       }
     }
+
+    if (newStartId) {
+
+      await prisma.unitLiveStatusCursor.upsert({
+        where: { id: CURSOR_ID },
+        create: { id: CURSOR_ID, positionsStartId: BigInt(newStartId) },
+        update: { positionsStartId: BigInt(newStartId) }
+      });
+    }
+
+    if (!newStartId || newStartId === positionsStartId || positions.length === 0) {
+      break;
+    }
+
+    positionsStartId = newStartId;
   }
 
-  return {
-    positionsChecked: positions.length,
-    updated,
-    skipped
-  };
+  // ---------- Batería ----------
+
+  let sensorsStartId = cursor?.sensorsStartId?.toString();
+
+  for (let page = 0; page < MAX_PAGES_PER_RUN; page++) {
+
+    const raw = await tracking3d.getSensorReadingsList({
+      startId: sensorsStartId
+    });
+
+    const readings: Tracking3DSensorReadingListEntry[] = raw?.Result?.SensorReadings || [];
+    const newStartId: string | undefined =
+      raw?.Result?.StartId !== undefined && raw?.Result?.StartId !== null
+        ? String(raw.Result.StartId)
+        : undefined;
+
+    result.sensorPagesProcessed++;
+    result.sensorReadingsChecked += readings.length;
+
+    for (const reading of readings) {
+
+      if (
+        !reading.UnitUid ||
+        reading.SensorType !== BATTERY_SENSOR_TYPE ||
+        reading.MeasurementSign !== BATTERY_MEASUREMENT_SIGN ||
+        !reading.Value
+      ) {
+        continue;
+      }
+
+      const value = parseFloat(reading.Value);
+
+      if (isNaN(value)) {
+        continue;
+      }
+
+      const outcome = await updateUnitWithRetry(prisma, reading.UnitUid, {
+        batteryLevel: value
+      });
+
+      if (outcome.outcome === "updated") {
+        result.batteryUpdated++;
+      }
+    }
+
+    if (newStartId) {
+
+      await prisma.unitLiveStatusCursor.upsert({
+        where: { id: CURSOR_ID },
+        create: { id: CURSOR_ID, sensorsStartId: BigInt(newStartId) },
+        update: { sensorsStartId: BigInt(newStartId) }
+      });
+    }
+
+    if (!newStartId || newStartId === sensorsStartId || readings.length === 0) {
+      break;
+    }
+
+    sensorsStartId = newStartId;
+  }
+
+  return result;
 }

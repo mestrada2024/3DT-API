@@ -54,7 +54,7 @@ export default fp(async (app) => {
 
       const result = await syncUnitLiveStatus(app.prisma, app.tracking3d);
 
-      app.log.debug(
+      app.log.info(
         { result },
         "Unit live status: sincronización completada"
       );

@@ -6,6 +6,11 @@ import {
   syncCompaniesFromTracking3D
 } from "../services/company-sync.service";
 
+import {
+  getAllowedCompanyUids,
+  requireRoot
+} from "../services/access-control.service";
+
 interface CompaniesListQuery {
   page?: string;
   limit?: string;
@@ -30,9 +35,10 @@ const companyRoutes:
     app.get(
       "/companies",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireRoot(request, reply);
 
         }
       },
@@ -119,12 +125,27 @@ const companyRoutes:
           const skip = (page - 1) * limit;
 
           const where: {
+            uid?: { in: string[] };
             OR?: Array<{
               uid?: { contains: string };
               name?: { contains: string };
               country?: { contains: string };
             }>;
           } = {};
+
+          /**
+           * root ve todas las compañías; admin/user solo las que
+           * tiene asignadas (UserCompany).
+           */
+          const allowedCompanyUids = await getAllowedCompanyUids(
+            app.prisma,
+            request.user.sub,
+            request.user.role
+          );
+
+          if (allowedCompanyUids !== null) {
+            where.uid = { in: allowedCompanyUids };
+          }
 
           if (request.query.search) {
             const search = request.query.search.trim();
@@ -200,9 +221,10 @@ const companyRoutes:
     app.post(
       "/companies/sync",
       {
-        preHandler: async (request) => {
+        preHandler: async (request, reply) => {
 
           await request.jwtVerify();
+          await requireRoot(request, reply);
 
         }
       },

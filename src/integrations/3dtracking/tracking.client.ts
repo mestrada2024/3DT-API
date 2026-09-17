@@ -994,4 +994,77 @@ export class Tracking3DClient {
 
     return data;
   }
+
+  /**
+   * Data/SensorReadingsList: stream cronológico (todas las unidades)
+   * paginado por StartId, igual que data/positionslist pero con
+   * lecturas de sensores (batería, GSM, satélites, etc.) en vez de
+   * posiciones. Es la fuente real de batería — Units/LatestPositionsList
+   * también trae SensorReadings, pero es el mismo endpoint que se
+   * bloqueó por límite de tasa (ver critical-alert.service.ts); este
+   * stream no mostró ese problema.
+   */
+  async getSensorReadingsList(
+    options: { startId?: string; uid?: string } = {}
+  ): Promise<any> {
+
+    const session =
+      await this.authenticate();
+
+    const params = new URLSearchParams({
+      UserIdGuid: session.userIdGuid,
+      SessionId: session.sessionId
+    });
+
+    if (options.startId !== undefined) {
+      params.set("StartId", options.startId);
+    }
+
+    if (options.uid) {
+      params.set("Uid", options.uid);
+    }
+
+    const url =
+      `${this.baseUrl}/data/sensorreadingslist?${params.toString()}`;
+
+    const response =
+      await fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+
+      throw new Error(
+        `3Dtracking data/sensorreadingslist failed: HTTP ${response.status} - ${responseText}`
+      );
+    }
+
+    let data: any;
+
+    try {
+
+      data = JSON.parse(responseText);
+
+    } catch {
+
+      throw new Error(
+        `Invalid JSON from data/sensorreadingslist: ${responseText}`
+      );
+    }
+
+    if (data?.Status?.Result && data.Status.Result !== "ok") {
+
+      throw new Error(
+        `3Dtracking data/sensorreadingslist failed: ${data.Status.Message || data.Status.ErrorCode}`
+      );
+    }
+
+    return data;
+  }
 }

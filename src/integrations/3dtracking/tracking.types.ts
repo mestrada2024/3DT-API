@@ -238,6 +238,7 @@ export interface Tracking3DPositionListEntry {
   SpeedMeasure: string | null;
   Heading: number;
   Ignition: string | null;
+  Odometer: number | null;
   GPSTimeUtc: string | null;
   GPSTimeLocal: string | null;
   ServerTimeUTC: string | null;
@@ -249,4 +250,19 @@ export interface Tracking3DPositionListResult {
   Position: Tracking3DPositionListEntry[] | null;
   StartId: number | string | null;
   IsCurrent?: boolean;
+}
+export interface Tracking3DSensorReadingListEntry {
+  UnitUid: string | null;
+  Name: string | null;
+  Value: string | null;
+  MeasurementSign: string | null;
+  ReadingTimeLocal: string | null;
+  ReadingTimeUtc: string | null;
+  ServerTimeUtc: string | null;
+  SensorType: string | null;
+}
+
+export interface Tracking3DSensorReadingListResult {
+  SensorReadings: Tracking3DSensorReadingListEntry[] | null;
+  StartId: number | string | null;
 }

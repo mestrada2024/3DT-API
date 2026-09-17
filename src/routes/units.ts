@@ -11,10 +11,27 @@ import {
   UnitValidationError,
 } from "../services/units-sync.service";
 
+import { getUnitTripsForDate } from "../services/unit-trips.service";
+
+import { getAllowedCompanyUids, requireWrite } from "../services/access-control.service";
+
 import {
   logAction,
   getActorFromRequest,
 } from "../services/audit-log.service";
+
+import { parseSort } from "../utils/sort";
+
+const UNIT_SORTABLE_FIELDS = [
+  "name",
+  "status",
+  "plate",
+  "companyName",
+  "lastPositionAt",
+  "batteryLevel",
+  "speed",
+  "createdAt"
+] as const;
 
 interface UnitParams {
   id: string;
@@ -34,6 +51,8 @@ interface UnitQuery {
   active?: string;
   search?: string;
   hasPlate?: string;
+  sortBy?: string;
+  sortDir?: string;
 }
 
 interface CreateUnitBody {
@@ -95,6 +114,7 @@ export default async function unitsRoutes(
           plate?: {
             not: null;
           };
+          companyUid?: { in: string[] };
           OR?: Array<{
             name?: {
               contains: string;
@@ -107,6 +127,21 @@ export default async function unitsRoutes(
             };
           }>;
         } = {};
+
+        /**
+         * root ve todas las unidades; admin/user solo las de sus
+         * empresas asignadas (UserCompany) — con cero empresas
+         * asignadas, ven cero unidades.
+         */
+        const allowedCompanyUids = await getAllowedCompanyUids(
+          fastify.prisma,
+          request.user.sub,
+          request.user.role
+        );
+
+        if (allowedCompanyUids !== null) {
+          where.companyUid = { in: allowedCompanyUids };
+        }
 
         /**
          * Filtrar por estado
@@ -152,6 +187,13 @@ export default async function unitsRoutes(
           }
         }
 
+        const { field: sortField, direction: sortDirection } = parseSort(
+          request.query.sortBy,
+          request.query.sortDir,
+          UNIT_SORTABLE_FIELDS,
+          "name"
+        );
+
         const [units, total] =
           await Promise.all([
             fastify.prisma.unit.findMany({
@@ -159,7 +201,7 @@ export default async function unitsRoutes(
               skip,
               take: limit,
               orderBy: {
-                id: "asc",
+                [sortField]: sortDirection,
               },
             }),
 
@@ -168,10 +210,40 @@ export default async function unitsRoutes(
             }),
           ]);
 
+        /**
+         * Unit.trackerUid guarda el Tracker.uid (no el nombre) — se
+         * busca el nombre de los trackers referenciados en esta
+         * página para que el frontend pueda mostrar el nombre del GPS
+         * en vez de su UID.
+         */
+        const trackerUids = [...new Set(
+          units
+            .map((unit) => unit.trackerUid)
+            .filter((uid): uid is string => Boolean(uid))
+        )];
+
+        const trackers = trackerUids.length
+          ? await fastify.prisma.tracker.findMany({
+              where: { uid: { in: trackerUids } },
+              select: { uid: true, name: true }
+            })
+          : [];
+
+        const trackerNameByUid = new Map(
+          trackers.map((tracker) => [tracker.uid, tracker.name])
+        );
+
+        const unitsWithTrackerName = units.map((unit) => ({
+          ...unit,
+          trackerName: unit.trackerUid
+            ? trackerNameByUid.get(unit.trackerUid) || null
+            : null
+        }));
+
         return reply.send({
           success: true,
 
-          data: units,
+          data: unitsWithTrackerName,
 
           pagination: {
             page,
@@ -209,7 +281,7 @@ export default async function unitsRoutes(
   }>(
     "/",
     {
-      preHandler: [fastify.authenticate],
+      preHandler: [fastify.authenticate, requireWrite],
     },
     async (request, reply) => {
 
@@ -229,6 +301,20 @@ export default async function unitsRoutes(
           success: false,
           error: "INVALID_BODY",
           message: "El campo name es requerido",
+        });
+      }
+
+      const allowedCompanyUids = await getAllowedCompanyUids(
+        fastify.prisma,
+        request.user.sub,
+        request.user.role
+      );
+
+      if (allowedCompanyUids !== null && !allowedCompanyUids.includes(companyUid)) {
+        return reply.status(403).send({
+          success: false,
+          error: "FORBIDDEN",
+          message: "No tienes acceso a esa empresa",
         });
       }
 
@@ -401,7 +487,7 @@ export default async function unitsRoutes(
   }>(
     "/:id/plate",
     {
-      preHandler: [fastify.authenticate],
+      preHandler: [fastify.authenticate, requireWrite],
     },
     async (request, reply) => {
 
@@ -520,7 +606,7 @@ export default async function unitsRoutes(
   }>(
     "/:id",
     {
-      preHandler: [fastify.authenticate],
+      preHandler: [fastify.authenticate, requireWrite],
     },
     async (request, reply) => {
 
@@ -603,7 +689,7 @@ export default async function unitsRoutes(
   }>(
     "/:id/tracker",
     {
-      preHandler: [fastify.authenticate],
+      preHandler: [fastify.authenticate, requireWrite],
     },
     async (request, reply) => {
 
@@ -721,7 +807,7 @@ export default async function unitsRoutes(
   }>(
     "/:id/tracker",
     {
-      preHandler: [fastify.authenticate],
+      preHandler: [fastify.authenticate, requireWrite],
     },
     async (request, reply) => {
 
@@ -865,6 +951,90 @@ export default async function unitsRoutes(
           success: false,
           error: "INTERNAL_SERVER_ERROR",
           message: "Error buscando la unidad",
+        });
+      }
+    }
+  );
+
+  /**
+   * GET /api/v1/units/:id/trips
+   *
+   * Viajes/recorridos del día para una unidad — no es un endpoint de
+   * 3Dtracking, se calcula agrupando su historial de posiciones del
+   * día (Data/PositionsList) en tramos de movimiento continuo
+   * separados por paradas (ver services/unit-trips.service.ts). Puede
+   * tardar unos segundos (pagina el stream de posiciones hasta
+   * alcanzar la fecha pedida).
+   *
+   * Parámetros:
+   * ?date=YYYY-MM-DD (default: hoy)
+   */
+  fastify.get<{
+    Params: UnitParams;
+    Querystring: { date?: string };
+  }>(
+    "/:id/trips",
+    {
+      preHandler: [fastify.authenticate],
+    },
+    async (request, reply) => {
+
+      try {
+        const identifier = request.params.id.trim();
+
+        const unit = await fastify.prisma.unit.findFirst({
+          where: {
+            OR: [
+              { externalId: identifier },
+              { imei: identifier },
+            ],
+          },
+        });
+
+        if (!unit) {
+          return reply.status(404).send({
+            success: false,
+            error: "UNIT_NOT_FOUND",
+            message: "No existe una unidad con ese identificador",
+          });
+        }
+
+        const dateParam = request.query.date?.trim();
+        const date =
+          dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)
+            ? dateParam
+            : new Date().toISOString().slice(0, 10);
+
+        const result = await getUnitTripsForDate(
+          fastify.prisma,
+          fastify.tracking3d,
+          unit.externalId,
+          date
+        );
+
+        return reply.send({
+          success: true,
+          data: {
+            unit: {
+              externalId: unit.externalId,
+              name: unit.name,
+            },
+            ...result,
+          },
+        });
+
+      } catch (error) {
+        fastify.log.error(error);
+
+        const isRateLimit =
+          error instanceof Error && error.message.includes("Rate limit");
+
+        return reply.status(502).send({
+          success: false,
+          error: isRateLimit ? "TRACKING3D_RATE_LIMIT" : "TRACKING3D_ERROR",
+          message: isRateLimit
+            ? "3Dtracking está limitando las solicitudes en este momento — intenta de nuevo en unos minutos"
+            : "No se pudieron obtener los viajes de la unidad",
         });
       }
     }

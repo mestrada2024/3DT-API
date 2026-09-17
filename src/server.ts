@@ -50,6 +50,12 @@ import criticalAlertRoutes
 import messagingRoutes
   from "./routes/messaging";
 
+import usersRoutes
+  from "./routes/users";
+
+import dashboardRoutes
+  from "./routes/dashboard";
+
 import tracking3dPlugin
   from "./plugins/tracking3d";
 
@@ -191,6 +197,22 @@ async function start() {
 
   await app.register(
     messagingRoutes,
+    {
+      prefix: "/api/v1"
+    }
+  );
+
+
+  await app.register(
+    usersRoutes,
+    {
+      prefix: "/api/v1/admin"
+    }
+  );
+
+
+  await app.register(
+    dashboardRoutes,
     {
       prefix: "/api/v1"
     }
