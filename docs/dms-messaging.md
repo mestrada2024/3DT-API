@@ -148,3 +148,82 @@ real queda en los logs del servidor.
 Cada llamada queda registrada en `AuditLog` (`module: "messaging"`,
 `action: "send"`, `resource: <phone>`), con el payload enviado y el
 resultado — igual que el resto de endpoints de escritura del sistema.
+
+---
+
+## Despacho automático desde CriticalAlertEvent (diseño, NO construido)
+
+**Estado: bloqueado.** El servicio que lee `CriticalAlertEvent`,
+arma el payload de arriba y lo envía automáticamente todavía no
+existe — un primer intento de escribirlo fue rechazado por el
+clasificador de seguridad de Claude Code ("Real-World Transactions",
+2026-09-18), ya que dispararía mensajes reales de WhatsApp de forma
+autónoma. Falta que el usuario decida cómo proceder (agregar una
+regla de permiso, o aprobar el primer envío real puntualmente).
+
+Lo que sí quedó decidido y construido es el **modelo de datos** para
+evitar enviar el mismo mensaje dos veces (evaluado y confirmado con
+el usuario, 2026-09-18): estado en la misma fila de
+`CriticalAlertEvent`, no una tabla separada de "despachados".
+
+### Por qué estado-en-la-misma-fila y no una tabla aparte
+
+- **Una sola operación atómica.** Reclamar un evento para enviarlo es
+  un solo `UPDATE ... WHERE whatsappStatus IS NULL` — si dos procesos
+  intentaran tomar el mismo evento a la vez, solo uno afecta una fila
+  (`affectedRows === 1`); el otro ve 0 filas afectadas y lo salta. Un
+  esquema "mover a otra tabla" necesita `INSERT` + `DELETE` como dos
+  pasos separados — si el proceso muere entre uno y otro, el evento
+  puede quedar duplicado (en ambas tablas) o perdido (en ninguna).
+- **Historial en un solo lugar.** Cualquier consulta ("alertas de
+  esta unidad", "qué se envió y qué falló") no necesita `UNION` entre
+  dos tablas.
+- **Mismo patrón ya usado en el resto del sistema** (`Sim.syncStatus`,
+  `Tracker.syncStatus` + `syncError`/`syncedAt`).
+
+### Campos (`CriticalAlertEvent`, migración `20260918170000`)
+
+| Campo            | Valores                                              |
+|-------------------|-------------------------------------------------------|
+| `whatsappStatus`  | `NULL` (pendiente) · `"sending"` (reclamado, ver abajo) · `"sent"` · `"error"` · `"skipped_backfill"` (eventos previos a este sistema, nunca elegibles) |
+| `whatsappSentAt`  | Timestamp del envío exitoso.                          |
+| `whatsappError`   | Mensaje de error de DMS SMART o de la excepción, si `whatsappStatus = "error"`. |
+
+### Flujo de envío (para cuando se construya)
+
+```
+1. UPDATE CriticalAlertEvent
+   SET whatsappStatus = 'sending'
+   WHERE id = ? AND whatsappStatus IS NULL
+   -- 0 filas afectadas → alguien más ya lo tomó (o ya no es null), saltar
+
+2. POST /api/v1/messaging/send (ver arriba) con:
+   - phone = CriticalAlertEvent.contactPhone
+   - accountId/channelId/templateId = WhatsappAlertConfig
+   - templateBody = { "1": `${alertTypeName} — ${unitName} — ${occurredAt}` }
+   - type = "notification"
+
+3. Si success:
+     UPDATE ... SET whatsappStatus='sent', whatsappSentAt=NOW()
+   Si falla (HTTP no-200 o excepción):
+     UPDATE ... SET whatsappStatus='error', whatsappError=<mensaje>
+```
+
+Paso 1 reclama el registro *antes* de llamar a DMS SMART — evita que
+un reintento o una segunda corrida concurrente reenvíe el mismo
+mensaje mientras el primer envío sigue en curso. Un evento que quede
+atascado en `"sending"` (el proceso murió a mitad de camino, sin
+llegar al paso 3) necesitaría un mecanismo de limpieza aparte
+(ej. reintentar los que llevan más de N minutos en `"sending"`) —
+no implementado todavía, pendiente de cuando se construya el
+servicio real.
+
+La consulta de elegibles queda:
+
+```sql
+SELECT * FROM CriticalAlertEvent
+WHERE whatsappStatus IS NULL
+  AND contactPhone IS NOT NULL
+  AND alertTypeCode IN (SELECT alertTypeCode FROM AllowedAlertType)
+ORDER BY occurredAt ASC
+```
