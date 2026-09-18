@@ -20,6 +20,19 @@ export interface DispatchResult {
   }>;
 }
 
+/**
+ * Company.contactPhone (y por lo tanto CriticalAlertEvent.contactPhone,
+ * copiado de ahí al momento de guardar la alarma) puede traer varios
+ * números separados por coma — se envía un mensaje independiente a
+ * cada uno.
+ */
+function parsePhones(contactPhone: string): string[] {
+  return contactPhone
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+}
+
 function formatOccurredAt(date: Date): string {
   return date.toLocaleString("es-SV", {
     timeZone: "America/El_Salvador",
@@ -99,75 +112,92 @@ export async function dispatchPendingWhatsappAlerts(
       continue;
     }
 
-    result.attempted++;
+    const phones = parsePhones(event.contactPhone as string);
 
-    const phone = event.contactPhone as string;
+    if (phones.length === 0) {
+
+      await prisma.criticalAlertEvent.update({
+        where: { id: event.id },
+        data: { whatsappStatus: "error", whatsappError: "contactPhone vacío tras separar por coma" }
+      });
+
+      continue;
+    }
 
     const messageLine =
       `${event.alertTypeName} — ${event.unitName || event.unitUid} — ` +
       formatOccurredAt(event.occurredAt);
 
-    try {
+    const failedPhones: string[] = [];
 
-      const sendResult = await dmsMessaging.sendMessage({
-        first_name: event.unitName || event.unitUid,
-        phone,
-        accountId: config.accountId,
-        channelId: config.channelId || undefined,
-        templateId: config.templateId,
-        templateBody: { "1": messageLine },
-        type: "notification"
-      });
+    for (const phone of phones) {
 
-      if (sendResult.success) {
+      result.attempted++;
 
-        await prisma.criticalAlertEvent.update({
-          where: { id: event.id },
-          data: { whatsappStatus: "sent", whatsappSentAt: new Date(), whatsappError: null }
+      try {
+
+        const sendResult = await dmsMessaging.sendMessage({
+          first_name: event.unitName || event.unitUid,
+          phone,
+          accountId: config.accountId,
+          channelId: config.channelId || undefined,
+          templateId: config.templateId,
+          templateBody: { "1": messageLine },
+          type: "notification"
         });
 
-        result.sent++;
+        if (sendResult.success) {
+          result.sent++;
+        } else {
+          result.failed++;
+          failedPhones.push(`${phone}: ${sendResult.message || sendResult.error || `HTTP ${sendResult.httpStatus}`}`);
+        }
 
-      } else {
-
-        await prisma.criticalAlertEvent.update({
-          where: { id: event.id },
-          data: {
-            whatsappStatus: "error",
-            whatsappError: sendResult.message || sendResult.error || `HTTP ${sendResult.httpStatus}`
-          }
+        result.results.push({
+          eventId: event.id,
+          unitName: event.unitName,
+          alertTypeName: event.alertTypeName,
+          phone,
+          success: sendResult.success,
+          message: sendResult.message || sendResult.error
         });
+
+      } catch (error) {
+
+        const message = (error as Error).message;
 
         result.failed++;
+        failedPhones.push(`${phone}: ${message}`);
+
+        result.results.push({
+          eventId: event.id,
+          unitName: event.unitName,
+          alertTypeName: event.alertTypeName,
+          phone,
+          success: false,
+          message
+        });
       }
+    }
 
-      result.results.push({
-        eventId: event.id,
-        unitName: event.unitName,
-        alertTypeName: event.alertTypeName,
-        phone,
-        success: sendResult.success,
-        message: sendResult.message || sendResult.error
-      });
-
-    } catch (error) {
-
-      const message = (error as Error).message;
+    /**
+     * Estado a nivel de evento: "sent" solo si TODOS los números
+     * recibieron el mensaje. Si alguno falló, queda "error" con el
+     * detalle de cuáles — no se reintenta automáticamente (evita
+     * volver a mandarle el mensaje a los números que sí funcionaron).
+     */
+    if (failedPhones.length === 0) {
 
       await prisma.criticalAlertEvent.update({
         where: { id: event.id },
-        data: { whatsappStatus: "error", whatsappError: message }
+        data: { whatsappStatus: "sent", whatsappSentAt: new Date(), whatsappError: null }
       });
 
-      result.failed++;
+    } else {
 
-      result.results.push({
-        eventId: event.id,
-        unitName: event.unitName,
-        alertTypeName: event.alertTypeName,
-        phone,
-        success: false,
-        message
+      await prisma.criticalAlertEvent.update({
+        where: { id: event.id },
+        data: { whatsappStatus: "error", whatsappError: failedPhones.join(" | ") }
       });
     }
   }
