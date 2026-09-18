@@ -65,9 +65,11 @@ import criticalAlertSchedulerPlugin
 import dmsMessagingPlugin
   from "./plugins/dms-messaging";
 
+import whatsappDispatchSchedulerPlugin
+  from "./plugins/whatsapp-dispatch-scheduler";
+
 import unitLiveStatusSchedulerPlugin
   from "./plugins/unit-live-status-scheduler";
-
 
 
 const app =
@@ -129,6 +131,10 @@ async function start() {
 
   await app.register(
     unitLiveStatusSchedulerPlugin
+  );
+
+  await app.register(
+    whatsappDispatchSchedulerPlugin
   );
 
 
