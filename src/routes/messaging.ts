@@ -12,6 +12,8 @@ import {
 } from "../services/audit-log.service";
 
 import { requireRoot } from "../services/access-control.service";
+import { dispatchPendingWhatsappAlerts } from "../services/whatsapp-dispatch.service";
+
 
 interface UpdateAlertConfigBody {
   accountId?: string;
@@ -235,6 +237,74 @@ const messagingRoutes:
         }
       }
     );
+
+	    /**
+     * POST /api/v1/messaging/dispatch-alerts
+     *
+     * Lee CriticalAlertEvent en busca de alertas pendientes
+     * (whatsappStatus null, contactPhone resuelto, tipo permitido —
+     * ver whatsapp-dispatch.service.ts) y las envía por WhatsApp vía
+     * DMS SMART, marcando el resultado en la misma fila. Invocación
+     * manual bajo demanda (root) — no revisa
+     * WhatsappAlertConfig.active, ese flag es para un futuro disparo
+     * automático en segundo plano.
+     */
+    app.post(
+      "/messaging/dispatch-alerts",
+      {
+        preHandler: async (request, reply) => {
+
+          await request.jwtVerify();
+          await requireRoot(request, reply);
+
+        }
+      },
+      async (request, reply) => {
+
+        const actor = getActorFromRequest(request);
+
+        try {
+
+          const result = await dispatchPendingWhatsappAlerts(app.prisma, app.dmsMessaging);
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "messaging",
+            action: "dispatch-alerts",
+            resource: "critical-alert-events",
+            success: true,
+            message: `attempted=${result.attempted} sent=${result.sent} failed=${result.failed}`
+          });
+
+          return reply.send({
+            success: true,
+            data: result
+          });
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "messaging",
+            action: "dispatch-alerts",
+            resource: "critical-alert-events",
+            success: false,
+            message: (error as Error).message
+          });
+
+          return reply
+            .code(500)
+            .send({
+              success: false,
+              error: "INTERNAL_SERVER_ERROR",
+              message: "Error despachando alertas por WhatsApp"
+            });
+        }
+      }
+    );
+
 
   };
 
