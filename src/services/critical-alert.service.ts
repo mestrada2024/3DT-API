@@ -10,21 +10,23 @@ export interface CriticalAlertScanResult {
   detected: number;
   stored: number;
   duplicates: number;
+  skippedOtherCompany: number;
 }
 
 const CURSOR_ID = 1;
 const MAX_PAGES_PER_RUN = 25;
 
 /**
- * De momento el servicio de envío de WhatsApp solo está dado de alta
- * para DADA-DADA (uid 2C809B) — no se debe guardar/enviar contactPhone
- * para otras empresas hasta que se active el servicio para ellas,
- * aunque ya tengan Company.contactPhone cargado. Si DADA-DADA todavía
- * no tiene contactPhone cargado, el evento igual se guarda (con
- * contactPhone null) — el número se agregará después directo en
- * Company.
+ * De momento solo trabajamos con DADA-DADA (uid 2C809B) — no se debe
+ * ni siquiera GUARDAR CriticalAlertEvent para otras empresas hasta
+ * que el usuario confirme agregarlas (instrucción explícita,
+ * 2026-09-18). Antes de esto solo se restringía contactPhone; ahora
+ * el evento completo se descarta para cualquier otra empresa, aunque
+ * matchee una alarma permitida (ver AllowedAlertType). Si
+ * companyUid es null (unidad sin empresa asignada localmente)
+ * tampoco se guarda — fail-closed.
  */
-const WHATSAPP_ENABLED_COMPANY_UIDS = new Set(["2C809B"]);
+const ENABLED_CLIENT_COMPANY_UIDS = new Set(["2C809B"]);
 
 /**
  * Escanea el stream cronológico de posiciones de 3Dtracking
@@ -87,7 +89,8 @@ export async function scanForCriticalAlerts(
     alertTypesChecked: alertTypes.length,
     detected: 0,
     stored: 0,
-    duplicates: 0
+    duplicates: 0,
+    skippedOtherCompany: 0
   };
 
   if (alertTypes.length === 0) {
@@ -142,12 +145,14 @@ export async function scanForCriticalAlerts(
        * se guarda en el mismo registro de la alarma para que el
        * futuro servicio de envío de WhatsApp lo use directo, sin
        * tener que volver a resolverlo. Se busca en lote (una sola
-       * query) para las empresas presentes en esta página.
+       * query) para las empresas presentes en esta página. Ya no hace
+       * falta filtrar por ENABLED_CLIENT_COMPANY_UIDS acá — el evento
+       * completo se descarta más abajo para cualquier empresa que no
+       * sea DADA-DADA, así que lo que llegue a este punto ya es
+       * DADA-DADA.
        */
       const companyUidsInPage = [...new Set(
-        [...companyUidByUnit.values()]
-          .filter((uid): uid is string => Boolean(uid))
-          .filter((uid) => WHATSAPP_ENABLED_COMPANY_UIDS.has(uid))
+        [...companyUidByUnit.values()].filter((uid): uid is string => Boolean(uid))
       )];
 
       const companies = companyUidsInPage.length
@@ -191,9 +196,14 @@ export async function scanForCriticalAlerts(
 
           result.detected++;
 
-          try {
+          const companyUid = companyUidByUnit.get(unit.Uid) || null;
 
-            const companyUid = companyUidByUnit.get(unit.Uid) || null;
+          if (!companyUid || !ENABLED_CLIENT_COMPANY_UIDS.has(companyUid)) {
+            result.skippedOtherCompany++;
+            continue;
+          }
+
+          try {
 
             await prisma.criticalAlertEvent.create({
               data: {
@@ -203,10 +213,7 @@ export async function scanForCriticalAlerts(
                 unitName: unit.Name || null,
                 unitImei: unit.Imei || null,
                 companyUid,
-                contactPhone:
-                  companyUid && WHATSAPP_ENABLED_COMPANY_UIDS.has(companyUid)
-                    ? contactPhoneByCompany.get(companyUid) || null
-                    : null,
+                contactPhone: contactPhoneByCompany.get(companyUid) || null,
                 driverName: position.Driver
                   ? [position.Driver.FirstName, position.Driver.LastName].filter(Boolean).join(" ") || position.Driver.Code || null
                   : null,
