@@ -186,6 +186,12 @@ model TrackerConfigAttribute {
   @@unique([templateId, name])
 }
 
+/**
+ * Catálogo completo de tipos de alarma reconocidos (señales de
+ * InputOutputs de 3Dtracking que el sistema sabe interpretar) — no
+ * implica que se estén vigilando ni que disparen WhatsApp, eso lo
+ * decide AllowedAlertType.
+ */
 model CriticalAlertType {
   id              Int      @id @default(autoincrement())
   code            String   @unique
@@ -193,9 +199,25 @@ model CriticalAlertType {
   description     String?
   matchSystemName String?
   active          Boolean  @default(true)
-  notifyWhatsapp  Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+/**
+ * Alarmas permitidas: la lista de tipos (CriticalAlertType.code) que
+ * realmente importan — el escáner (critical-alert.service.ts) solo
+ * vigila y guarda CriticalAlertEvent para códigos presentes acá (en
+ * vez de los 11 tipos del catálogo completo, para no acumular ruido
+ * de señales que no interesan, ej. puerta del motorista) y es la
+ * misma lista que decide qué alarmas son elegibles para notificar por
+ * WhatsApp. Hoy solo debería contener PANIC_BUTTON — decisión de
+ * negocio del 2026-09-18, antes se vigilaban los 11 tipos del
+ * catálogo y eso generó miles de eventos irrelevantes.
+ */
+model AllowedAlertType {
+  id            Int      @id @default(autoincrement())
+  alertTypeCode String   @unique
+  createdAt     DateTime @default(now())
 }
 
 /**
@@ -216,27 +238,31 @@ model WhatsappAlertConfig {
 }
 
 model CriticalAlertEvent {
-  id            Int       @id @default(autoincrement())
-  alertTypeCode String
-  alertTypeName String
-  unitUid       String
-  unitName      String?
-  unitImei      String?
-  companyUid    String?
-  contactPhone  String?
-  driverName    String?
-  latitude      Decimal?  @db.Decimal(10, 7)
-  longitude     Decimal?  @db.Decimal(10, 7)
-  address       String?   @db.Text
-  speed         Decimal?  @db.Decimal(10, 2)
-  heading       Decimal?  @db.Decimal(10, 2)
-  description   String?
-  occurredAt    DateTime
-  createdAt     DateTime  @default(now())
+  id             Int       @id @default(autoincrement())
+  alertTypeCode  String
+  alertTypeName  String
+  unitUid        String
+  unitName       String?
+  unitImei       String?
+  companyUid     String?
+  contactPhone   String?
+  driverName     String?
+  latitude       Decimal?  @db.Decimal(10, 7)
+  longitude      Decimal?  @db.Decimal(10, 7)
+  address        String?   @db.Text
+  speed          Decimal?  @db.Decimal(10, 2)
+  heading        Decimal?  @db.Decimal(10, 2)
+  description    String?
+  occurredAt     DateTime
+  createdAt      DateTime  @default(now())
+  whatsappStatus String?
+  whatsappSentAt DateTime?
+  whatsappError  String?   @db.Text
 
   @@unique([unitUid, alertTypeCode, occurredAt])
   @@index([alertTypeCode])
   @@index([occurredAt])
+  @@index([whatsappStatus])
 }
 
 model CriticalAlertScanCursor {

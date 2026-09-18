@@ -110,7 +110,7 @@ const criticalAlertRoutes:
             }
           }
 
-          const [alerts, total] =
+          const [alerts, total, allowed] =
             await Promise.all([
               app.prisma.criticalAlertType.findMany({
                 where,
@@ -121,14 +121,25 @@ const criticalAlertRoutes:
 
               app.prisma.criticalAlertType.count({
                 where
+              }),
+
+              app.prisma.allowedAlertType.findMany({
+                select: { alertTypeCode: true }
               })
             ]);
+
+          const allowedCodes = new Set(allowed.map((a) => a.alertTypeCode));
+
+          const alertsWithNotify = alerts.map((alert) => ({
+            ...alert,
+            notifyWhatsapp: allowedCodes.has(alert.code)
+          }));
 
           return reply.send({
 
             success: true,
 
-            data: alerts,
+            data: alertsWithNotify,
 
             pagination: {
               page,
@@ -388,24 +399,41 @@ const criticalAlertRoutes:
               });
           }
 
-          const data: { notifyWhatsapp?: boolean; active?: boolean } = {};
-
-          if (request.body.notifyWhatsapp !== undefined) {
-            data.notifyWhatsapp = request.body.notifyWhatsapp;
-          }
+          const data: { active?: boolean } = {};
 
           if (request.body.active !== undefined) {
             data.active = request.body.active;
           }
 
-          const updated = await app.prisma.criticalAlertType.update({
-            where: { id },
-            data
+          const updated = Object.keys(data).length
+            ? await app.prisma.criticalAlertType.update({ where: { id }, data })
+            : await app.prisma.criticalAlertType.findUniqueOrThrow({ where: { id } });
+
+          if (request.body.notifyWhatsapp !== undefined) {
+
+            if (request.body.notifyWhatsapp) {
+
+              await app.prisma.allowedAlertType.upsert({
+                where: { alertTypeCode: updated.code },
+                create: { alertTypeCode: updated.code },
+                update: {}
+              });
+
+            } else {
+
+              await app.prisma.allowedAlertType.deleteMany({
+                where: { alertTypeCode: updated.code }
+              });
+            }
+          }
+
+          const allowedNow = await app.prisma.allowedAlertType.findUnique({
+            where: { alertTypeCode: updated.code }
           });
 
           return reply.send({
             success: true,
-            data: updated
+            data: { ...updated, notifyWhatsapp: Boolean(allowedNow) }
           });
 
         } catch (error: any) {

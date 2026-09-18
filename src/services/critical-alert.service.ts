@@ -57,12 +57,29 @@ export async function scanForCriticalAlerts(
   tracking3d: Tracking3DService
 ): Promise<CriticalAlertScanResult> {
 
-  const alertTypes = await prisma.criticalAlertType.findMany({
-    where: {
-      active: true,
-      matchSystemName: { not: null }
-    }
+  /**
+   * Solo se vigilan señales cuyo código esté en AllowedAlertType (lista
+   * de alarmas permitidas, decisión de negocio — hoy solo
+   * PANIC_BUTTON) además de activas en el catálogo. Antes se vigilaban
+   * los 11 tipos del catálogo completo, lo que acumuló miles de
+   * eventos irrelevantes (ej. puerta del motorista) — limpiado el
+   * 2026-09-18.
+   */
+  const allowed = await prisma.allowedAlertType.findMany({
+    select: { alertTypeCode: true }
   });
+
+  const allowedCodes = allowed.map((a) => a.alertTypeCode);
+
+  const alertTypes = allowedCodes.length
+    ? await prisma.criticalAlertType.findMany({
+        where: {
+          active: true,
+          matchSystemName: { not: null },
+          code: { in: allowedCodes }
+        }
+      })
+    : [];
 
   const result: CriticalAlertScanResult = {
     pagesProcessed: 0,
