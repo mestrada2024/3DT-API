@@ -67,9 +67,9 @@ function formatLastTransmission(value: string | null): string {
   return `Hace ${diffDays} d`;
 }
 
-function openTripsWindow(unit: { externalId: string }) {
-  const url = `/trips/${encodeURIComponent(unit.externalId)}`;
-  window.open(url, `trips-${unit.externalId}`, "width=1000,height=650,noopener,noreferrer");
+function openTripsWindow(unit: { externalId: string }, date: string) {
+  const url = `/trips/${encodeURIComponent(unit.externalId)}?date=${encodeURIComponent(date)}`;
+  window.open(url, `trips-${unit.externalId}-${date}`, "width=1000,height=650,noopener,noreferrer");
 }
 
 function isStale(value: string | null): boolean {
@@ -430,8 +430,8 @@ export function Dashboard() {
                           <button
                             type="button"
                             className="link-cell"
-                            onClick={() => openTripsWindow(unit)}
-                            title="Ver viajes de hoy en el mapa"
+                            onClick={() => openTripsWindow(unit, date)}
+                            title={`Ver viajes del ${date} en el mapa`}
                           >
                             {formatLastTransmission(unit.lastPositionAt)}
                           </button>
