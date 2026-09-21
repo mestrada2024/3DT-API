@@ -13,9 +13,29 @@ export interface UnitLiveStatusSyncResult {
   sensorPagesProcessed: number;
   sensorReadingsChecked: number;
   batteryUpdated: number;
+  fuelReadingsChecked: number;
+  fuelRefillsDetected: number;
 }
 
 const CURSOR_ID = 1;
+const FUEL_SENSOR_NAME = "Nivel de Combustible";
+/**
+ * En 3Dtracking el umbral real de "cuánto subió el nivel para contar
+ * como recarga" se configura por vehículo en su módulo de Alertas
+ * (bloqueado para esta cuenta, ver docs) — confirmado con dos
+ * ejemplos reales muy distintos: 50 galones para un camión grande,
+ * 2 galones para una camioneta pequeña (Toyota Lite Ace). Sin acceso
+ * a esos valores reales por unidad, se usa este default hasta que se
+ * configure Unit.fuelRefillThresholdGallons caso por caso.
+ */
+const DEFAULT_FUEL_REFILL_THRESHOLD_GALLONS = 5;
+/**
+ * Solo se detectan/guardan recargas para DADA-DADA por ahora — mismo
+ * alcance que critical-alert.service.ts (ENABLED_CLIENT_COMPANY_UIDS),
+ * duplicado acá porque son servicios independientes; si el alcance
+ * cambia, actualizar ambos.
+ */
+const FUEL_REFILL_ENABLED_COMPANY_UIDS = new Set(["2C809B"]);
 /**
  * Bajo a propósito (vs. las 25 páginas de critical-alert.service.ts):
  * acá hay DOS streams por corrida (posiciones + sensores), y cada
@@ -137,7 +157,9 @@ export async function syncUnitLiveStatus(
     positionsUpdated: 0,
     sensorPagesProcessed: 0,
     sensorReadingsChecked: 0,
-    batteryUpdated: 0
+    batteryUpdated: 0,
+    fuelReadingsChecked: 0,
+    fuelRefillsDetected: 0
   };
 
   // ---------- Posiciones (lastPositionAt, lat/lon, speed) ----------
@@ -249,6 +271,16 @@ export async function syncUnitLiveStatus(
 
     for (const reading of readings) {
 
+      const fuelResult = await processFuelReading(prisma, reading);
+
+      if (fuelResult.checked) {
+        result.fuelReadingsChecked++;
+      }
+
+      if (fuelResult.refillDetected) {
+        result.fuelRefillsDetected++;
+      }
+
       if (
         !reading.UnitUid ||
         reading.SensorType !== BATTERY_SENSOR_TYPE ||
@@ -290,4 +322,108 @@ export async function syncUnitLiveStatus(
   }
 
   return result;
+}
+
+function toUtcDate(raw: string): Date {
+  return new Date(raw.endsWith("Z") ? raw : `${raw}Z`);
+}
+
+/**
+ * Detecta recargas de combustible comparando la lectura más reciente
+ * de "Nivel de Combustible" contra la última guardada para esa unidad
+ * (Unit.lastFuelLevel) — si sube al menos el umbral configurado
+ * (Unit.fuelRefillThresholdGallons, o el default si no está
+ * configurado), se guarda un CriticalAlertEvent tipo FUEL_REFILL.
+ *
+ * No depende del módulo de Alertas de 3Dtracking (bloqueado por
+ * permisos, ErrorCode 50021) — se construye desde el stream crudo de
+ * Data/SensorReadingsList, que sí es accesible.
+ *
+ * Se llama desde dentro del mismo loop de sensores que ya procesa
+ * batería (ver syncUnitLiveStatus), para no duplicar el llamado a
+ * getSensorReadingsList.
+ */
+async function processFuelReading(
+  prisma: PrismaClient,
+  reading: Tracking3DSensorReadingListEntry
+): Promise<{ checked: boolean; refillDetected: boolean }> {
+
+  if (
+    !reading.UnitUid ||
+    reading.Name !== FUEL_SENSOR_NAME ||
+    !reading.Value
+  ) {
+    return { checked: false, refillDetected: false };
+  }
+
+  const newLevel = parseFloat(reading.Value);
+
+  if (isNaN(newLevel)) {
+    return { checked: false, refillDetected: false };
+  }
+
+  const unit = await prisma.unit.findUnique({
+    where: { externalId: reading.UnitUid },
+    select: {
+      id: true,
+      name: true,
+      companyUid: true,
+      lastFuelLevel: true,
+      fuelRefillThresholdGallons: true
+    }
+  });
+
+  if (!unit) {
+    return { checked: false, refillDetected: false };
+  }
+
+  const readingAtRaw = reading.ReadingTimeUtc || reading.ServerTimeUtc;
+  const readingAt = readingAtRaw ? toUtcDate(readingAtRaw) : new Date();
+
+  const previousLevel = unit.lastFuelLevel !== null ? Number(unit.lastFuelLevel) : null;
+
+  const threshold =
+    unit.fuelRefillThresholdGallons !== null
+      ? Number(unit.fuelRefillThresholdGallons)
+      : DEFAULT_FUEL_REFILL_THRESHOLD_GALLONS;
+
+  const delta = previousLevel !== null ? newLevel - previousLevel : null;
+  const isRefill = delta !== null && delta >= threshold;
+
+  await prisma.unit.update({
+    where: { id: unit.id },
+    data: { lastFuelLevel: newLevel, lastFuelLevelAt: readingAt }
+  });
+
+  if (!isRefill || !unit.companyUid || !FUEL_REFILL_ENABLED_COMPANY_UIDS.has(unit.companyUid)) {
+    return { checked: true, refillDetected: false };
+  }
+
+  const company = await prisma.company.findUnique({
+    where: { uid: unit.companyUid },
+    select: { contactPhone: true }
+  });
+
+  try {
+
+    await prisma.criticalAlertEvent.create({
+      data: {
+        alertTypeCode: "FUEL_REFILL",
+        alertTypeName: "Recarga de combustible telemetría",
+        unitUid: reading.UnitUid,
+        unitName: unit.name || null,
+        companyUid: unit.companyUid,
+        contactPhone: company?.contactPhone || null,
+        description: `Recarga detectada: +${delta!.toFixed(1)} gal (de ${previousLevel!.toFixed(1)} a ${newLevel.toFixed(1)} gal)`,
+        occurredAt: readingAt
+      }
+    });
+
+  } catch (error) {
+    if ((error as { code?: string })?.code !== "P2002") {
+      throw error;
+    }
+  }
+
+  return { checked: true, refillDetected: true };
 }

@@ -34,27 +34,30 @@ model UserCompany {
 }
 
 model Unit {
-  id             Int        @id @default(autoincrement())
-  trackingId     BigInt?    @unique
-  imei           String?
-  plate          String?
-  active         Boolean    @default(true)
-  externalId     String     @unique
-  name           String
-  companyUid     String?
-  companyName    String?
-  registration   String?
-  status         String     @default("unknown")
-  trackerUid     String?
-  latitude       Decimal?   @db.Decimal(10, 7)
-  longitude      Decimal?   @db.Decimal(10, 7)
-  speed          Decimal?   @db.Decimal(10, 2)
-  mileage        Decimal?   @db.Decimal(12, 2)
-  batteryLevel   Decimal?   @db.Decimal(5, 2)
-  lastPositionAt DateTime?
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
-  positions      Position[]
+  id                         Int        @id @default(autoincrement())
+  trackingId                 BigInt?    @unique
+  imei                       String?
+  plate                      String?
+  active                     Boolean    @default(true)
+  externalId                 String     @unique
+  name                       String
+  companyUid                 String?
+  companyName                String?
+  registration                String?
+  status                     String     @default("unknown")
+  trackerUid                 String?
+  latitude                   Decimal?   @db.Decimal(10, 7)
+  longitude                  Decimal?   @db.Decimal(10, 7)
+  speed                      Decimal?   @db.Decimal(10, 2)
+  mileage                    Decimal?   @db.Decimal(12, 2)
+  batteryLevel               Decimal?   @db.Decimal(5, 2)
+  lastPositionAt             DateTime?
+  lastFuelLevel              Decimal?   @db.Decimal(8, 2)
+  lastFuelLevelAt            DateTime?
+  fuelRefillThresholdGallons Decimal?   @db.Decimal(8, 2)
+  createdAt                  DateTime   @default(now())
+  updatedAt                  DateTime   @updatedAt
+  positions                  Position[]
 }
 
 model Position {
