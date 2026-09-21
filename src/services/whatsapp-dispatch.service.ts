@@ -4,6 +4,18 @@ import { DmsMessagingClient } from "../integrations/dms-messaging/messaging.clie
 
 const ALERT_CONFIG_ID = 1;
 const BATCH_LIMIT = 20;
+/**
+ * Notificaciones por WhatsApp restringidas a esta unidad únicamente
+ * (instrucción explícita del usuario, 2026-09-21) — mientras se
+ * investiga por qué los mensajes no están llegando, se acota el
+ * despacho a "Telefono Mauricio" (22A847) para no seguir enviando
+ * mensajes reales por otras unidades. No afecta la detección/
+ * almacenamiento (sigue igual para las demás unidades habilitadas,
+ * ej. 5D23E9 para combustible) — solo el envío queda pausado para
+ * ellas, sus eventos quedan pendientes (whatsappStatus NULL) por si
+ * se levanta la restricción después.
+ */
+const WHATSAPP_DISPATCH_ENABLED_UNIT_UIDS = new Set(["22A847"]);
 
 export interface DispatchResult {
   reason: "not_configured" | "ok";
@@ -103,7 +115,8 @@ export async function dispatchPendingWhatsappAlerts(
     where: {
       whatsappStatus: null,
       contactPhone: { not: null },
-      alertTypeCode: { in: allowedCodes }
+      alertTypeCode: { in: allowedCodes },
+      unitUid: { in: [...WHATSAPP_DISPATCH_ENABLED_UNIT_UIDS] }
     },
     orderBy: { occurredAt: "asc" },
     take: BATCH_LIMIT
