@@ -461,6 +461,20 @@ async function processFuelReading(
     select: { contactPhone: true }
   });
 
+  /**
+   * Data/SensorReadingsList no trae latitud/longitud — se toma la
+   * posición más cercana (no posterior) conocida de la unidad, ya
+   * persistida por separado (ver el loop de posiciones más arriba),
+   * para poder incluir un link de Google Maps en la notificación
+   * (ver whatsapp-dispatch.service.ts) y, para el caso de posible
+   * extracción, confirmar si el motor estaba apagado.
+   */
+  const lastPosition = await prisma.position.findFirst({
+    where: { unitId: unit.id, recordedAt: { lte: readingAt } },
+    orderBy: { recordedAt: "desc" },
+    select: { ignition: true, recordedAt: true, latitude: true, longitude: true }
+  });
+
   const debugContext = {
     rawReading: reading,
     unit: { id: unit.id, name: unit.name, companyUid: unit.companyUid },
@@ -468,7 +482,8 @@ async function processFuelReading(
     newLevel,
     delta,
     thresholdUsed: threshold,
-    thresholdSource: unit.fuelRefillThresholdGallons !== null ? "unit-specific" : "default"
+    thresholdSource: unit.fuelRefillThresholdGallons !== null ? "unit-specific" : "default",
+    lastPosition
   };
 
   if (isRefill) {
@@ -483,6 +498,8 @@ async function processFuelReading(
         unitName: unit.name || null,
         companyUid: unit.companyUid,
         contactPhone: company?.contactPhone || null,
+        latitude: lastPosition?.latitude ?? null,
+        longitude: lastPosition?.longitude ?? null,
         description: `Recarga detectada: +${delta!.toFixed(1)} gal (de ${previousLevel!.toFixed(1)} a ${newLevel.toFixed(1)} gal)`,
         occurredAt: readingAt
       },
@@ -493,12 +510,6 @@ async function processFuelReading(
   }
 
   // isSuspiciousDrop: solo cuenta como alarma si el motor estaba apagado.
-
-  const lastPosition = await prisma.position.findFirst({
-    where: { unitId: unit.id, recordedAt: { lte: readingAt } },
-    orderBy: { recordedAt: "desc" },
-    select: { ignition: true, recordedAt: true }
-  });
 
   if (!lastPosition || lastPosition.ignition !== "off") {
     // Motor encendido (o sin dato de posición para confirmar) → consumo normal, no se guarda.
@@ -515,10 +526,12 @@ async function processFuelReading(
       unitName: unit.name || null,
       companyUid: unit.companyUid,
       contactPhone: company?.contactPhone || null,
+      latitude: lastPosition.latitude,
+      longitude: lastPosition.longitude,
       description: `Caída sospechosa: ${delta!.toFixed(1)} gal (de ${previousLevel!.toFixed(1)} a ${newLevel.toFixed(1)} gal) con el motor apagado`,
       occurredAt: readingAt
     },
-    { ...debugContext, ignitionAt: lastPosition.ignition, ignitionRecordedAt: lastPosition.recordedAt }
+    debugContext
   );
 
   return { checked: true, refillDetected: false, theftSuspectedDetected: true };

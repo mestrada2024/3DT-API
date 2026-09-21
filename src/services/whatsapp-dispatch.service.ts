@@ -45,6 +45,22 @@ function formatOccurredAt(date: Date): string {
 }
 
 /**
+ * Link de Google Maps con la ubicación desde donde transmitió el
+ * equipo — pedido explícito del usuario para poder ver de dónde vino
+ * la alerta directo desde el mensaje de WhatsApp, sin entrar a la
+ * plataforma. Formato "https://www.google.com/maps?q=lat,lng" abre
+ * directo en un pin, funciona igual en la app de Maps (móvil) y en
+ * el navegador.
+ */
+function buildLocationLink(latitude: unknown, longitude: unknown): string | null {
+  if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
+    return null;
+  }
+
+  return `https://www.google.com/maps?q=${Number(latitude)},${Number(longitude)}`;
+}
+
+/**
  * Lee CriticalAlertEvent en busca de alertas pendientes de notificar
  * por WhatsApp y las envía vía DMS SMART, siguiendo el diseño
  * documentado en docs/dms-messaging.md (evaluado y confirmado con el
@@ -124,9 +140,12 @@ export async function dispatchPendingWhatsappAlerts(
       continue;
     }
 
+    const locationLink = buildLocationLink(event.latitude, event.longitude);
+
     const messageLine =
       `${event.alertTypeName} — ${event.unitName || event.unitUid} — ` +
-      formatOccurredAt(event.occurredAt);
+      formatOccurredAt(event.occurredAt) +
+      (locationLink ? ` — Ubicación: ${locationLink}` : "");
 
     const failedPhones: string[] = [];
 
