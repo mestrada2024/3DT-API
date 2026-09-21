@@ -37,6 +37,16 @@ const DEFAULT_FUEL_REFILL_THRESHOLD_GALLONS = 5;
  */
 const FUEL_REFILL_ENABLED_COMPANY_UIDS = new Set(["2C809B"]);
 /**
+ * Restringido además a nivel de unidad, no solo empresa — de las
+ * unidades DADA-DADA, "5D23E9" (P5449D Toyota Lite Ace) es la única
+ * que está reportando lecturas de "Nivel de Combustible" ahora mismo
+ * (confirmado con datos reales, 2026-09-21). El resto de unidades de
+ * DADA-DADA no tienen este sensor transmitiendo, así que no tiene
+ * caso vigilarlas todavía. Agregar acá cualquier otra unidad conforme
+ * se confirme que reporta este sensor.
+ */
+const FUEL_REFILL_ENABLED_UNIT_UIDS = new Set(["5D23E9"]);
+/**
  * Bajo a propósito (vs. las 25 páginas de critical-alert.service.ts):
  * acá hay DOS streams por corrida (posiciones + sensores), y cada
  * página implica cientos/miles de UPDATE individuales a Unit —
@@ -395,7 +405,12 @@ async function processFuelReading(
     data: { lastFuelLevel: newLevel, lastFuelLevelAt: readingAt }
   });
 
-  if (!isRefill || !unit.companyUid || !FUEL_REFILL_ENABLED_COMPANY_UIDS.has(unit.companyUid)) {
+  if (
+    !isRefill ||
+    !unit.companyUid ||
+    !FUEL_REFILL_ENABLED_COMPANY_UIDS.has(unit.companyUid) ||
+    !FUEL_REFILL_ENABLED_UNIT_UIDS.has(reading.UnitUid)
+  ) {
     return { checked: true, refillDetected: false };
   }
 
@@ -404,19 +419,42 @@ async function processFuelReading(
     select: { contactPhone: true }
   });
 
+  const eventData = {
+    alertTypeCode: "FUEL_REFILL",
+    alertTypeName: "Recarga de combustible telemetría",
+    unitUid: reading.UnitUid,
+    unitName: unit.name || null,
+    companyUid: unit.companyUid,
+    contactPhone: company?.contactPhone || null,
+    description: `Recarga detectada: +${delta!.toFixed(1)} gal (de ${previousLevel!.toFixed(1)} a ${newLevel.toFixed(1)} gal)`,
+    occurredAt: readingAt
+  };
+
+  /**
+   * Log con todos los datos extraíbles de la alarma — pedido
+   * explícito del usuario para poder revisar el detalle completo de
+   * cada recarga detectada (lectura cruda de 3Dtracking + valores
+   * calculados + el registro guardado), no solo el resumen que ya
+   * loguea el scheduler (unit-live-status-scheduler.ts).
+   */
+  console.log(
+    "FUEL_REFILL_DETECTED",
+    JSON.stringify({
+      rawReading: reading,
+      unit: { id: unit.id, name: unit.name, companyUid: unit.companyUid },
+      previousLevel,
+      newLevel,
+      delta,
+      thresholdUsed: threshold,
+      thresholdSource: unit.fuelRefillThresholdGallons !== null ? "unit-specific" : "default",
+      savedEvent: eventData
+    })
+  );
+
   try {
 
     await prisma.criticalAlertEvent.create({
-      data: {
-        alertTypeCode: "FUEL_REFILL",
-        alertTypeName: "Recarga de combustible telemetría",
-        unitUid: reading.UnitUid,
-        unitName: unit.name || null,
-        companyUid: unit.companyUid,
-        contactPhone: company?.contactPhone || null,
-        description: `Recarga detectada: +${delta!.toFixed(1)} gal (de ${previousLevel!.toFixed(1)} a ${newLevel.toFixed(1)} gal)`,
-        occurredAt: readingAt
-      }
+      data: eventData
     });
 
   } catch (error) {
