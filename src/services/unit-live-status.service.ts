@@ -15,6 +15,7 @@ export interface UnitLiveStatusSyncResult {
   batteryUpdated: number;
   fuelReadingsChecked: number;
   fuelRefillsDetected: number;
+  fuelTheftSuspectedDetected: number;
 }
 
 const CURSOR_ID = 1;
@@ -30,12 +31,12 @@ const FUEL_SENSOR_NAME = "Nivel de Combustible";
  */
 const DEFAULT_FUEL_REFILL_THRESHOLD_GALLONS = 5;
 /**
- * Solo se detectan/guardan recargas para DADA-DADA por ahora — mismo
- * alcance que critical-alert.service.ts (ENABLED_CLIENT_COMPANY_UIDS),
- * duplicado acá porque son servicios independientes; si el alcance
- * cambia, actualizar ambos.
+ * Solo se vigila combustible (recarga y posible extracción) para
+ * DADA-DADA por ahora — mismo alcance que critical-alert.service.ts
+ * (ENABLED_CLIENT_COMPANY_UIDS), duplicado acá porque son servicios
+ * independientes; si el alcance cambia, actualizar ambos.
  */
-const FUEL_REFILL_ENABLED_COMPANY_UIDS = new Set(["2C809B"]);
+const FUEL_MONITORING_ENABLED_COMPANY_UIDS = new Set(["2C809B"]);
 /**
  * Restringido además a nivel de unidad, no solo empresa — de las
  * unidades DADA-DADA, "5D23E9" (P5449D Toyota Lite Ace) es la única
@@ -45,7 +46,7 @@ const FUEL_REFILL_ENABLED_COMPANY_UIDS = new Set(["2C809B"]);
  * caso vigilarlas todavía. Agregar acá cualquier otra unidad conforme
  * se confirme que reporta este sensor.
  */
-const FUEL_REFILL_ENABLED_UNIT_UIDS = new Set(["5D23E9"]);
+const FUEL_MONITORING_ENABLED_UNIT_UIDS = new Set(["5D23E9"]);
 /**
  * Bajo a propósito (vs. las 25 páginas de critical-alert.service.ts):
  * acá hay DOS streams por corrida (posiciones + sensores), y cada
@@ -169,7 +170,8 @@ export async function syncUnitLiveStatus(
     sensorReadingsChecked: 0,
     batteryUpdated: 0,
     fuelReadingsChecked: 0,
-    fuelRefillsDetected: 0
+    fuelRefillsDetected: 0,
+    fuelTheftSuspectedDetected: 0
   };
 
   // ---------- Posiciones (lastPositionAt, lat/lon, speed) ----------
@@ -291,6 +293,10 @@ export async function syncUnitLiveStatus(
         result.fuelRefillsDetected++;
       }
 
+      if (fuelResult.theftSuspectedDetected) {
+        result.fuelTheftSuspectedDetected++;
+      }
+
       if (
         !reading.UnitUid ||
         reading.SensorType !== BATTERY_SENSOR_TYPE ||
@@ -338,38 +344,73 @@ function toUtcDate(raw: string): Date {
   return new Date(raw.endsWith("Z") ? raw : `${raw}Z`);
 }
 
+async function createFuelAlertEvent(
+  prisma: PrismaClient,
+  logTag: string,
+  data: Parameters<PrismaClient["criticalAlertEvent"]["create"]>[0]["data"],
+  debugContext: Record<string, unknown>
+): Promise<void> {
+
+  /**
+   * Log con todos los datos extraíbles de la alarma — pedido
+   * explícito del usuario para poder revisar el detalle completo de
+   * cada detección (lectura cruda de 3Dtracking + valores calculados
+   * + el registro guardado), no solo el resumen que ya loguea el
+   * scheduler (unit-live-status-scheduler.ts).
+   */
+  console.log(logTag, JSON.stringify({ ...debugContext, savedEvent: data }));
+
+  try {
+
+    await prisma.criticalAlertEvent.create({ data });
+
+  } catch (error) {
+    if ((error as { code?: string })?.code !== "P2002") {
+      throw error;
+    }
+  }
+}
+
 /**
- * Detecta recargas de combustible comparando la lectura más reciente
- * de "Nivel de Combustible" contra la última guardada para esa unidad
- * (Unit.lastFuelLevel) — si sube al menos el umbral configurado
- * (Unit.fuelRefillThresholdGallons, o el default si no está
- * configurado), se guarda un CriticalAlertEvent tipo FUEL_REFILL.
- *
- * No depende del módulo de Alertas de 3Dtracking (bloqueado por
- * permisos, ErrorCode 50021) — se construye desde el stream crudo de
- * Data/SensorReadingsList, que sí es accesible.
- *
- * Se llama desde dentro del mismo loop de sensores que ya procesa
- * batería (ver syncUnitLiveStatus), para no duplicar el llamado a
+ * Compara la lectura más reciente de "Nivel de Combustible" contra la
+ * última guardada para esa unidad (Unit.lastFuelLevel). No depende
+ * del módulo de Alertas de 3Dtracking (bloqueado por permisos,
+ * ErrorCode 50021) — se construye desde el stream crudo de
+ * Data/SensorReadingsList, que sí es accesible. Se llama desde dentro
+ * del mismo loop de sensores que ya procesa batería (ver
+ * syncUnitLiveStatus), para no duplicar el llamado a
  * getSensorReadingsList.
+ *
+ * Delta > 0 y por encima del umbral → recarga (FUEL_REFILL). Delta
+ * < 0 y por encima del umbral EN VALOR ABSOLUTO, con el motor
+ * apagado en la posición más reciente conocida de la unidad →
+ * posible extracción (FUEL_THEFT_SUSPECTED, arquitectura propuesta
+ * por el usuario 2026-09-21) — una caída similar con el motor
+ * encendido es simplemente consumo normal, no se guarda como alarma.
+ * El estado del motor se cruza contra Position.ignition (ya se
+ * persiste por separado, ver el loop de posiciones más arriba) por
+ * unidad + el registro más cercano no posterior a la lectura de
+ * combustible.
  */
 async function processFuelReading(
   prisma: PrismaClient,
   reading: Tracking3DSensorReadingListEntry
-): Promise<{ checked: boolean; refillDetected: boolean }> {
+): Promise<{ checked: boolean; refillDetected: boolean; theftSuspectedDetected: boolean }> {
+
+  const noEvent = { checked: false, refillDetected: false, theftSuspectedDetected: false };
 
   if (
     !reading.UnitUid ||
     reading.Name !== FUEL_SENSOR_NAME ||
     !reading.Value
   ) {
-    return { checked: false, refillDetected: false };
+    return noEvent;
   }
 
   const newLevel = parseFloat(reading.Value);
 
   if (isNaN(newLevel)) {
-    return { checked: false, refillDetected: false };
+    return noEvent;
   }
 
   const unit = await prisma.unit.findUnique({
@@ -384,7 +425,7 @@ async function processFuelReading(
   });
 
   if (!unit) {
-    return { checked: false, refillDetected: false };
+    return noEvent;
   }
 
   const readingAtRaw = reading.ReadingTimeUtc || reading.ServerTimeUtc;
@@ -399,69 +440,86 @@ async function processFuelReading(
 
   const delta = previousLevel !== null ? newLevel - previousLevel : null;
   const isRefill = delta !== null && delta >= threshold;
+  const isSuspiciousDrop = delta !== null && delta <= -threshold;
 
   await prisma.unit.update({
     where: { id: unit.id },
     data: { lastFuelLevel: newLevel, lastFuelLevelAt: readingAt }
   });
 
-  if (
-    !isRefill ||
-    !unit.companyUid ||
-    !FUEL_REFILL_ENABLED_COMPANY_UIDS.has(unit.companyUid) ||
-    !FUEL_REFILL_ENABLED_UNIT_UIDS.has(reading.UnitUid)
-  ) {
-    return { checked: true, refillDetected: false };
+  const inScope =
+    Boolean(unit.companyUid) &&
+    FUEL_MONITORING_ENABLED_COMPANY_UIDS.has(unit.companyUid as string) &&
+    FUEL_MONITORING_ENABLED_UNIT_UIDS.has(reading.UnitUid);
+
+  if (!inScope || (!isRefill && !isSuspiciousDrop)) {
+    return { checked: true, refillDetected: false, theftSuspectedDetected: false };
   }
 
   const company = await prisma.company.findUnique({
-    where: { uid: unit.companyUid },
+    where: { uid: unit.companyUid as string },
     select: { contactPhone: true }
   });
 
-  const eventData = {
-    alertTypeCode: "FUEL_REFILL",
-    alertTypeName: "Recarga de combustible telemetría",
-    unitUid: reading.UnitUid,
-    unitName: unit.name || null,
-    companyUid: unit.companyUid,
-    contactPhone: company?.contactPhone || null,
-    description: `Recarga detectada: +${delta!.toFixed(1)} gal (de ${previousLevel!.toFixed(1)} a ${newLevel.toFixed(1)} gal)`,
-    occurredAt: readingAt
+  const debugContext = {
+    rawReading: reading,
+    unit: { id: unit.id, name: unit.name, companyUid: unit.companyUid },
+    previousLevel,
+    newLevel,
+    delta,
+    thresholdUsed: threshold,
+    thresholdSource: unit.fuelRefillThresholdGallons !== null ? "unit-specific" : "default"
   };
 
-  /**
-   * Log con todos los datos extraíbles de la alarma — pedido
-   * explícito del usuario para poder revisar el detalle completo de
-   * cada recarga detectada (lectura cruda de 3Dtracking + valores
-   * calculados + el registro guardado), no solo el resumen que ya
-   * loguea el scheduler (unit-live-status-scheduler.ts).
-   */
-  console.log(
-    "FUEL_REFILL_DETECTED",
-    JSON.stringify({
-      rawReading: reading,
-      unit: { id: unit.id, name: unit.name, companyUid: unit.companyUid },
-      previousLevel,
-      newLevel,
-      delta,
-      thresholdUsed: threshold,
-      thresholdSource: unit.fuelRefillThresholdGallons !== null ? "unit-specific" : "default",
-      savedEvent: eventData
-    })
-  );
+  if (isRefill) {
 
-  try {
+    await createFuelAlertEvent(
+      prisma,
+      "FUEL_REFILL_DETECTED",
+      {
+        alertTypeCode: "FUEL_REFILL",
+        alertTypeName: "Recarga de combustible telemetría",
+        unitUid: reading.UnitUid,
+        unitName: unit.name || null,
+        companyUid: unit.companyUid,
+        contactPhone: company?.contactPhone || null,
+        description: `Recarga detectada: +${delta!.toFixed(1)} gal (de ${previousLevel!.toFixed(1)} a ${newLevel.toFixed(1)} gal)`,
+        occurredAt: readingAt
+      },
+      debugContext
+    );
 
-    await prisma.criticalAlertEvent.create({
-      data: eventData
-    });
-
-  } catch (error) {
-    if ((error as { code?: string })?.code !== "P2002") {
-      throw error;
-    }
+    return { checked: true, refillDetected: true, theftSuspectedDetected: false };
   }
 
-  return { checked: true, refillDetected: true };
+  // isSuspiciousDrop: solo cuenta como alarma si el motor estaba apagado.
+
+  const lastPosition = await prisma.position.findFirst({
+    where: { unitId: unit.id, recordedAt: { lte: readingAt } },
+    orderBy: { recordedAt: "desc" },
+    select: { ignition: true, recordedAt: true }
+  });
+
+  if (!lastPosition || lastPosition.ignition !== "off") {
+    // Motor encendido (o sin dato de posición para confirmar) → consumo normal, no se guarda.
+    return { checked: true, refillDetected: false, theftSuspectedDetected: false };
+  }
+
+  await createFuelAlertEvent(
+    prisma,
+    "FUEL_THEFT_SUSPECTED_DETECTED",
+    {
+      alertTypeCode: "FUEL_THEFT_SUSPECTED",
+      alertTypeName: "Posible extracción de combustible",
+      unitUid: reading.UnitUid,
+      unitName: unit.name || null,
+      companyUid: unit.companyUid,
+      contactPhone: company?.contactPhone || null,
+      description: `Caída sospechosa: ${delta!.toFixed(1)} gal (de ${previousLevel!.toFixed(1)} a ${newLevel.toFixed(1)} gal) con el motor apagado`,
+      occurredAt: readingAt
+    },
+    { ...debugContext, ignitionAt: lastPosition.ignition, ignitionRecordedAt: lastPosition.recordedAt }
+  );
+
+  return { checked: true, refillDetected: false, theftSuspectedDetected: true };
 }
