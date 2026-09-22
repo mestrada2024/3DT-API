@@ -337,3 +337,53 @@ export function deleteUser(id: number) {
     method: "DELETE"
   });
 }
+
+// ---------- Estadísticas: reporte de frenado brusco ----------
+
+export interface HarshBrakingEvent {
+  unitUid: string;
+  unitName: string | null;
+  occurredAtUtc: string;
+  occurredAtLocal: string | null;
+  speed: number;
+  speedMeasure: string | null;
+  heading: number;
+  ignition: string | null;
+  odometer: number | null;
+  latitude: number;
+  longitude: number;
+  address: string | null;
+  driverName: string | null;
+  description: string | null;
+}
+
+export interface HarshBrakingReport {
+  from: string;
+  to: string;
+  unitsRequested: string[];
+  positionsChecked: number;
+  pagesProcessed: number;
+  truncated: boolean;
+  events: HarshBrakingEvent[];
+}
+
+export function getHarshBrakingReport(params: {
+  companyUid: string;
+  from: string;
+  to: string;
+  units?: string[];
+}) {
+  const qs = new URLSearchParams({
+    companyUid: params.companyUid,
+    from: params.from,
+    to: params.to
+  });
+
+  if (params.units && params.units.length > 0) {
+    qs.set("units", params.units.join(","));
+  }
+
+  return apiRequest<{ success: boolean; data: HarshBrakingReport }>(
+    `/api/v1/tracking/reports/harsh-braking?${qs.toString()}`
+  );
+}

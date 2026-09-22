@@ -30,6 +30,13 @@ const ADMIN_GROUP_ITEM_ROOT_ONLY: NavItem = { to: "/admin/usuarios", label: "Usu
 
 const MENSAJERIA_ITEM: NavItem = { to: "/admin/mensajeria", label: "Mensajería" };
 
+const ESTADISTICAS_GROUP: NavGroup = {
+  label: "Estadísticas",
+  items: [
+    { to: "/estadisticas/frenado-brusco", label: "Reporte por frenado brusco" }
+  ]
+};
+
 function NavDropdown({ group }: { group: NavGroup }) {
   const [open, setOpen] = useState(false);
   const location = useLocation();
@@ -105,6 +112,7 @@ export function AppHeader() {
           </NavLink>
 
           <NavDropdown group={FLOTAS_GROUP} />
+          <NavDropdown group={ESTADISTICAS_GROUP} />
           <NavDropdown group={adminGroup} />
 
           {isRoot && (
