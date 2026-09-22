@@ -59,6 +59,9 @@ import dashboardRoutes
 import webhooks3dtRoutes
   from "./routes/webhooks-3dt";
 
+import reportsRoutes
+  from "./routes/reports";
+
 import tracking3dPlugin
   from "./plugins/tracking3d";
 
@@ -232,6 +235,14 @@ async function start() {
     webhooks3dtRoutes,
     {
       prefix: "/api/v1"
+    }
+  );
+
+
+  await app.register(
+    reportsRoutes,
+    {
+      prefix: "/api/v1/tracking"
     }
   );
 
