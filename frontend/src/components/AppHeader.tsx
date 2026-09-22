@@ -33,7 +33,7 @@ const MENSAJERIA_ITEM: NavItem = { to: "/admin/mensajeria", label: "Mensajería"
 const ESTADISTICAS_GROUP: NavGroup = {
   label: "Estadísticas",
   items: [
-    { to: "/estadisticas/frenado-brusco", label: "Reporte por frenado brusco" }
+    { to: "/estadisticas/eventos-conductor", label: "Eventos de conductor" }
   ]
 };
 

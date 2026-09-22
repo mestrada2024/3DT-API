@@ -4,7 +4,6 @@ import { Tracking3DService } from "../integrations/3dtracking/tracking.service";
 
 const MAX_PAGES = 300;
 const PAGE_DELAY_MS = 150;
-const HARSH_BRAKING_SYSTEM_NAME = "excessivedeceleration";
 
 /**
  * IDs por día del stream global de posiciones (compartido por TODA la
@@ -19,9 +18,43 @@ const HARSH_BRAKING_SYSTEM_NAME = "excessivedeceleration";
 const ESTIMATED_IDS_PER_DAY = 20_400_000;
 const START_ID_SAFETY_MARGIN = 1.15;
 
-export interface HarshBrakingEvent {
+/**
+ * Tipos de alarma relacionados al comportamiento del conductor —
+ * subconjunto del catálogo completo (CriticalAlertType) usado para
+ * poblar los checkboxes del reporte. "Rebasar"/overtaking, que el
+ * usuario mencionó como ejemplo, NO existe como señal real de
+ * 3Dtracking en esta cuenta — no se incluye para no ofrecer una
+ * opción que nunca va a coincidir con nada.
+ */
+const DRIVER_EVENT_TYPE_CODES = [
+  "EXCESSIVE_DECELERATION",
+  "EXCESSIVE_ACCELERATION",
+  "EXCESSIVE_LATERAL_G",
+  "OVERSPEEDING",
+  "ACCIDENT"
+];
+
+export interface DriverEventTypeOption {
+  code: string;
+  name: string;
+}
+
+export async function listDriverEventTypes(prisma: PrismaClient): Promise<DriverEventTypeOption[]> {
+
+  const types = await prisma.criticalAlertType.findMany({
+    where: { code: { in: DRIVER_EVENT_TYPE_CODES }, matchSystemName: { not: null } },
+    select: { code: true, name: true },
+    orderBy: { name: "asc" }
+  });
+
+  return types;
+}
+
+export interface DriverEvent {
   unitUid: string;
   unitName: string | null;
+  alertTypeCode: string;
+  alertTypeName: string;
   occurredAtUtc: string;
   occurredAtLocal: string | null;
   speed: number;
@@ -36,65 +69,78 @@ export interface HarshBrakingEvent {
   description: string | null;
 }
 
-export interface HarshBrakingReportResult {
+export interface DriverEventsReportResult {
   from: string;
   to: string;
   unitsRequested: string[];
+  eventTypesRequested: string[];
   positionsChecked: number;
   pagesProcessed: number;
   truncated: boolean;
-  events: HarshBrakingEvent[];
+  events: DriverEvent[];
 }
 
 /**
- * Reporte de frenado brusco (InputOutputs.SystemName="excessivedeceleration"
- * en Data/PositionsList) para una empresa, en un rango de fecha/hora,
- * opcionalmente acotado a unidades específicas.
+ * Reporte de eventos de conductor (frenado brusco, aceleración
+ * brusca, giro brusco, exceso de velocidad, accidente —
+ * InputOutputs en Data/PositionsList) para una empresa, en un rango
+ * de fecha/hora, acotado a unidades y tipos de evento específicos
+ * (ambos requeridos — ver reports.ts, ya no hay default implícito de
+ * "todas las unidades/todos los tipos" si no se selecciona nada,
+ * decisión explícita del usuario 2026-09-22).
  *
- * Mismo mecanismo que el reporte manual verificado el 2026-09-22 para
- * PRODUCTOS DIANA: un solo recorrido del stream global (sin filtro
- * Uid — cubrir varias unidades en una sola pasada es mucho más barato
- * que una pasada por unidad, ver ese hallazgo en el historial), con
- * un StartId de arranque estimado a partir de UnitLiveStatusCursor
- * (referencia de "ahora" que ya mantiene el scheduler en vivo) menos
- * los días hacia atrás que pide el rango, con margen de seguridad.
+ * Mismo mecanismo verificado manualmente para PRODUCTOS DIANA: un
+ * solo recorrido del stream global (sin filtro Uid — cubrir varias
+ * unidades en una sola pasada es mucho más barato que una pasada por
+ * unidad), con un StartId de arranque estimado a partir de
+ * UnitLiveStatusCursor (referencia de "ahora" que ya mantiene el
+ * scheduler en vivo) menos los días hacia atrás que pide el rango.
  *
  * Puede tardar varios minutos en rangos de varios días — MAX_PAGES
  * acota la corrida; si se alcanza el límite o 3Dtracking responde
  * límite de tasa, se devuelve lo encontrado hasta ese punto con
  * truncated=true en vez de fallar todo el reporte.
  */
-export async function getHarshBrakingReport(
+export async function getDriverEventsReport(
   prisma: PrismaClient,
   tracking3d: Tracking3DService,
   companyUid: string,
   from: Date,
   to: Date,
-  unitExternalIds?: string[]
-): Promise<HarshBrakingReportResult> {
+  unitExternalIds: string[],
+  eventTypeCodes: string[]
+): Promise<DriverEventsReportResult> {
 
   const companyUnits = await prisma.unit.findMany({
     where: { companyUid },
     select: { externalId: true, name: true }
   });
 
-  const targetUnits = unitExternalIds && unitExternalIds.length > 0
-    ? companyUnits.filter((u) => unitExternalIds.includes(u.externalId))
-    : companyUnits;
+  const targetUnitUids = new Set(
+    companyUnits.filter((u) => unitExternalIds.includes(u.externalId)).map((u) => u.externalId)
+  );
 
-  const targetUnitUids = new Set(targetUnits.map((u) => u.externalId));
+  const eventTypes = await prisma.criticalAlertType.findMany({
+    where: { code: { in: eventTypeCodes }, matchSystemName: { not: null } },
+    select: { code: true, name: true, matchSystemName: true }
+  });
 
-  const result: HarshBrakingReportResult = {
+  const systemNameToType = new Map(
+    eventTypes.map((t) => [t.matchSystemName as string, { code: t.code, name: t.name }])
+  );
+
+  const result: DriverEventsReportResult = {
     from: from.toISOString(),
     to: to.toISOString(),
     unitsRequested: [...targetUnitUids],
+    eventTypesRequested: eventTypes.map((t) => t.code),
     positionsChecked: 0,
     pagesProcessed: 0,
     truncated: false,
     events: []
   };
 
-  if (targetUnitUids.size === 0) {
+  if (targetUnitUids.size === 0 || systemNameToType.size === 0) {
     return result;
   }
 
@@ -166,13 +212,21 @@ export async function getHarshBrakingReport(
 
       for (const io of position.InputOutputs || []) {
 
-        if (io.SystemName !== HARSH_BRAKING_SYSTEM_NAME || !io.Active) {
+        if (!io.Active || !io.SystemName) {
+          continue;
+        }
+
+        const matchedType = systemNameToType.get(io.SystemName);
+
+        if (!matchedType) {
           continue;
         }
 
         result.events.push({
           unitUid: uid,
           unitName: position.Unit?.Name || null,
+          alertTypeCode: matchedType.code,
+          alertTypeName: matchedType.name,
           occurredAtUtc: occurredAtRaw,
           occurredAtLocal: position.GPSTimeLocal || null,
           speed: position.Speed,

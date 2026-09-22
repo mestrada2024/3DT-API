@@ -12,7 +12,7 @@ import { CompaniesAdmin } from "./pages/CompaniesAdmin";
 import { UsersAdmin } from "./pages/UsersAdmin";
 import { MessagingAdmin } from "./pages/MessagingAdmin";
 import { TripsView } from "./pages/TripsView";
-import { StatsHarshBraking } from "./pages/StatsHarshBraking";
+import { DriverEventsReport } from "./pages/DriverEventsReport";
 
 export function App() {
   return (
@@ -27,7 +27,7 @@ export function App() {
           <Route path="/admin/sims" element={<SimsAdmin />} />
           <Route path="/admin/empresas" element={<CompaniesAdmin />} />
           <Route path="/trips/:unitId" element={<TripsView />} />
-          <Route path="/estadisticas/frenado-brusco" element={<StatsHarshBraking />} />
+          <Route path="/estadisticas/eventos-conductor" element={<DriverEventsReport />} />
 
           <Route element={<RootRoute />}>
             <Route path="/admin/usuarios" element={<UsersAdmin />} />

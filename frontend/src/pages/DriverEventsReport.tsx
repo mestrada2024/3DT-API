@@ -5,10 +5,12 @@ import { ApiError } from "../api/client";
 import {
   Company,
   Unit,
+  DriverEventTypeOption,
   listCompaniesLocal,
   listUnitsAdmin,
-  getHarshBrakingReport,
-  HarshBrakingReport
+  listDriverEventTypes,
+  getDriverEventsReport,
+  DriverEventsReport as DriverEventsReportData
 } from "../api/admin";
 
 function todayStr(): string {
@@ -35,12 +37,15 @@ function mapsLink(lat: number, lng: number): string {
   return `https://www.google.com/maps?q=${lat},${lng}`;
 }
 
-export function StatsHarshBraking() {
+export function DriverEventsReport() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [companyUid, setCompanyUid] = useState("");
 
   const [units, setUnits] = useState<Unit[]>([]);
   const [selectedUnitIds, setSelectedUnitIds] = useState<Set<string>>(new Set());
+
+  const [eventTypes, setEventTypes] = useState<DriverEventTypeOption[]>([]);
+  const [selectedEventTypes, setSelectedEventTypes] = useState<Set<string>>(new Set());
 
   const [fromDate, setFromDate] = useState(todayStr());
   const [fromTime, setFromTime] = useState("00:00");
@@ -49,12 +54,16 @@ export function StatsHarshBraking() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [report, setReport] = useState<HarshBrakingReport | null>(null);
+  const [report, setReport] = useState<DriverEventsReportData | null>(null);
 
   useEffect(() => {
     listCompaniesLocal({ page: 1, limit: 200 })
       .then((res) => setCompanies(res.data))
       .catch(() => setCompanies([]));
+
+    listDriverEventTypes()
+      .then((res) => setEventTypes(res.data))
+      .catch(() => setEventTypes([]));
   }, []);
 
   useEffect(() => {
@@ -82,11 +91,45 @@ export function StatsHarshBraking() {
     });
   }
 
+  function toggleAllUnits() {
+    setSelectedUnitIds((prev) =>
+      prev.size === units.length ? new Set() : new Set(units.map((u) => u.externalId))
+    );
+  }
+
+  function toggleEventType(code: string) {
+    setSelectedEventTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) {
+        next.delete(code);
+      } else {
+        next.add(code);
+      }
+      return next;
+    });
+  }
+
+  function toggleAllEventTypes() {
+    setSelectedEventTypes((prev) =>
+      prev.size === eventTypes.length ? new Set() : new Set(eventTypes.map((t) => t.code))
+    );
+  }
+
   async function handleGenerate(event: React.FormEvent) {
     event.preventDefault();
 
     if (!companyUid) {
       setError("Selecciona una empresa");
+      return;
+    }
+
+    if (selectedUnitIds.size === 0) {
+      setError("Selecciona al menos una unidad (o usa \"Seleccionar todas\")");
+      return;
+    }
+
+    if (selectedEventTypes.size === 0) {
+      setError("Selecciona al menos un tipo de evento (o usa \"Seleccionar todos\")");
       return;
     }
 
@@ -98,11 +141,12 @@ export function StatsHarshBraking() {
       const from = new Date(toDatetimeLocalValue(fromDate, fromTime) + ":00Z").toISOString();
       const to = new Date(toDatetimeLocalValue(toDate, toTime) + ":59Z").toISOString();
 
-      const response = await getHarshBrakingReport({
+      const response = await getDriverEventsReport({
         companyUid,
         from,
         to,
-        units: selectedUnitIds.size > 0 ? [...selectedUnitIds] : undefined
+        units: [...selectedUnitIds],
+        eventTypes: [...selectedEventTypes]
       });
 
       setReport(response.data);
@@ -120,13 +164,14 @@ export function StatsHarshBraking() {
 
       <main className="app-main">
         <div className="dashboard-toolbar">
-          <h1>Reporte por frenado brusco</h1>
+          <h1>Reporte de eventos de conductor</h1>
         </div>
 
         <p className="submodule-help">
-          Datos reales de 3Dtracking (no una aproximación) — para rangos de varios
-          días puede tardar varios minutos, ya que se consulta directamente contra
-          su API.
+          Datos reales de 3Dtracking (no una aproximación) — frenado brusco,
+          aceleración brusca, giro brusco, exceso de velocidad y accidente.
+          Para rangos de varios días puede tardar varios minutos, ya que se
+          consulta directamente contra su API.
         </p>
 
         <form className="inline-panel" onSubmit={handleGenerate}>
@@ -162,11 +207,45 @@ export function StatsHarshBraking() {
             </label>
           </div>
 
+          <div className="field">
+            <span>Tipos de evento</span>
+            <div className="company-checklist">
+              <label className="company-check">
+                <input
+                  type="checkbox"
+                  checked={eventTypes.length > 0 && selectedEventTypes.size === eventTypes.length}
+                  onChange={toggleAllEventTypes}
+                />
+                <strong>Seleccionar todos</strong>
+              </label>
+              {eventTypes.map((t) => (
+                <label key={t.code} className="company-check">
+                  <input
+                    type="checkbox"
+                    checked={selectedEventTypes.has(t.code)}
+                    onChange={() => toggleEventType(t.code)}
+                  />
+                  {t.name}
+                </label>
+              ))}
+            </div>
+          </div>
+
           {companyUid && (
             <div className="field">
-              <span>Unidades (opcional — si no seleccionas ninguna, se usan todas)</span>
+              <span>Unidades</span>
               <div className="company-checklist">
                 {units.length === 0 && <span className="dashboard-meta">Esta empresa no tiene unidades</span>}
+                {units.length > 0 && (
+                  <label className="company-check">
+                    <input
+                      type="checkbox"
+                      checked={selectedUnitIds.size === units.length}
+                      onChange={toggleAllUnits}
+                    />
+                    <strong>Seleccionar todas</strong>
+                  </label>
+                )}
                 {units.map((u) => (
                   <label key={u.externalId} className="company-check">
                     <input
@@ -204,6 +283,7 @@ export function StatsHarshBraking() {
                 <thead>
                   <tr>
                     <th>Fecha/hora (local)</th>
+                    <th>Tipo</th>
                     <th>Unidad</th>
                     <th>Velocidad</th>
                     <th>Rumbo</th>
@@ -217,13 +297,14 @@ export function StatsHarshBraking() {
                 <tbody>
                   {report.events.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="table-empty">Sin eventos en el rango seleccionado</td>
+                      <td colSpan={10} className="table-empty">Sin eventos en el rango seleccionado</td>
                     </tr>
                   )}
 
                   {report.events.map((ev, index) => (
                     <tr key={index}>
                       <td>{formatEventTime(ev.occurredAtUtc)}</td>
+                      <td>{ev.alertTypeName}</td>
                       <td className="unit-name">{ev.unitName || ev.unitUid}</td>
                       <td>{ev.speed} {ev.speedMeasure || ""}</td>
                       <td>{ev.heading}°</td>

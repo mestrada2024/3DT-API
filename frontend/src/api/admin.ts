@@ -338,11 +338,24 @@ export function deleteUser(id: number) {
   });
 }
 
-// ---------- Estadísticas: reporte de frenado brusco ----------
+// ---------- Estadísticas: reporte de eventos de conductor ----------
 
-export interface HarshBrakingEvent {
+export interface DriverEventTypeOption {
+  code: string;
+  name: string;
+}
+
+export function listDriverEventTypes() {
+  return apiRequest<{ success: boolean; data: DriverEventTypeOption[] }>(
+    "/api/v1/tracking/reports/driver-event-types"
+  );
+}
+
+export interface DriverEvent {
   unitUid: string;
   unitName: string | null;
+  alertTypeCode: string;
+  alertTypeName: string;
   occurredAtUtc: string;
   occurredAtLocal: string | null;
   speed: number;
@@ -357,33 +370,33 @@ export interface HarshBrakingEvent {
   description: string | null;
 }
 
-export interface HarshBrakingReport {
+export interface DriverEventsReport {
   from: string;
   to: string;
   unitsRequested: string[];
+  eventTypesRequested: string[];
   positionsChecked: number;
   pagesProcessed: number;
   truncated: boolean;
-  events: HarshBrakingEvent[];
+  events: DriverEvent[];
 }
 
-export function getHarshBrakingReport(params: {
+export function getDriverEventsReport(params: {
   companyUid: string;
   from: string;
   to: string;
-  units?: string[];
+  units: string[];
+  eventTypes: string[];
 }) {
   const qs = new URLSearchParams({
     companyUid: params.companyUid,
     from: params.from,
-    to: params.to
+    to: params.to,
+    units: params.units.join(","),
+    eventTypes: params.eventTypes.join(",")
   });
 
-  if (params.units && params.units.length > 0) {
-    qs.set("units", params.units.join(","));
-  }
-
-  return apiRequest<{ success: boolean; data: HarshBrakingReport }>(
-    `/api/v1/tracking/reports/harsh-braking?${qs.toString()}`
+  return apiRequest<{ success: boolean; data: DriverEventsReport }>(
+    `/api/v1/tracking/reports/driver-events?${qs.toString()}`
   );
 }
