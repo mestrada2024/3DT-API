@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
 
     ports:
-      - "3010:3010"
+      - "3011:3010"
 
     env_file:
       - .env
@@ -57,10 +57,13 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      # args:
-      #   VITE_API_BASE_URL: https://api.tudominio.com   # opcional; sin esto,
-      #   el frontend usa automáticamente el mismo host donde se abre la
-      #   página, puerto 3010
+      args:
+        # El API ahora escucha HTTP plano en 3011 (puerto interno) — el
+        # puerto 3010 lo toma nginx para TLS, ya que 3DTracking exige
+        # HTTPS en el webhook (ver docs/dms-messaging.md / investigación
+        # 2026-10-05). El frontend sigue sirviéndose por HTTP (3000), así
+        # que llama a la API por HTTP también, en el nuevo puerto 3011.
+        VITE_API_BASE_URL: http://129.80.217.232:3011
 
     container_name: dms-frontend
 
