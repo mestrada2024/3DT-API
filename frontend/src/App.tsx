@@ -11,6 +11,7 @@ import { UnitsAdmin } from "./pages/UnitsAdmin";
 import { CompaniesAdmin } from "./pages/CompaniesAdmin";
 import { UsersAdmin } from "./pages/UsersAdmin";
 import { MessagingAdmin } from "./pages/MessagingAdmin";
+import { AlertsView } from "./pages/AlertsView";
 import { TripsView } from "./pages/TripsView";
 import { DriverEventsReport } from "./pages/DriverEventsReport";
 
@@ -26,6 +27,7 @@ export function App() {
           <Route path="/admin/trackers" element={<TrackersAdmin />} />
           <Route path="/admin/sims" element={<SimsAdmin />} />
           <Route path="/admin/empresas" element={<CompaniesAdmin />} />
+          <Route path="/alertas" element={<AlertsView />} />
           <Route path="/trips/:unitId" element={<TripsView />} />
           <Route path="/estadisticas/eventos-conductor" element={<DriverEventsReport />} />
 

@@ -224,19 +224,23 @@ model AllowedAlertType {
 }
 
 /**
- * Configuración (una sola fila) del envío de WhatsApp disparado por
- * alertas críticas — ver docs/dms-messaging.md y
- * CriticalAlertType.notifyWhatsapp. templateId queda null hasta tener
- * la plantilla real aprobada por DMS SMART.
+ * Plantillas de WhatsApp disponibles para notificar alertas críticas
+ * — ver docs/dms-messaging.md y CriticalAlertType.notifyWhatsapp.
+ * Puede haber varias; a lo sumo una con active=true (se aplica a
+ * nivel de aplicación en messaging.ts, no hay constraint de DB para
+ * esto en MariaDB). dispatchPendingWhatsappAlerts usa la que tenga
+ * active=true. templateId queda null hasta tener la plantilla real
+ * aprobada por DMS SMART.
  */
 model WhatsappAlertConfig {
-  id            Int      @id @default(1)
+  id            Int      @id @default(autoincrement())
   accountId     String?
   channelId     String?
   templateId    String?
   templateLabel String?
   templateText  String?  @db.Text
   active        Boolean  @default(false)
+  createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
 
@@ -261,11 +265,14 @@ model CriticalAlertEvent {
   whatsappStatus String?
   whatsappSentAt DateTime?
   whatsappError  String?   @db.Text
+  read           Boolean   @default(false)
+  readAt         DateTime?
 
   @@unique([unitUid, alertTypeCode, occurredAt])
   @@index([alertTypeCode])
   @@index([occurredAt])
   @@index([whatsappStatus])
+  @@index([read])
 }
 
 model CriticalAlertScanCursor {

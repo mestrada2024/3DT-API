@@ -2,7 +2,6 @@ import { PrismaClient } from "@prisma/client";
 
 import { DmsMessagingClient } from "../integrations/dms-messaging/messaging.client";
 
-const ALERT_CONFIG_ID = 1;
 const BATCH_LIMIT = 20;
 /**
  * Notificaciones por WhatsApp restringidas a esta unidad únicamente
@@ -38,14 +37,14 @@ export interface DispatchResult {
  * números separados por coma — se envía un mensaje independiente a
  * cada uno.
  */
-function parsePhones(contactPhone: string): string[] {
+export function parsePhones(contactPhone: string): string[] {
   return contactPhone
     .split(",")
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
 }
 
-function formatOccurredAt(date: Date): string {
+export function formatOccurredAt(date: Date): string {
   return date.toLocaleString("es-SV", {
     timeZone: "America/El_Salvador",
     day: "2-digit",
@@ -64,7 +63,7 @@ function formatOccurredAt(date: Date): string {
  * directo en un pin, funciona igual en la app de Maps (móvil) y en
  * el navegador.
  */
-function buildLocationLink(latitude: unknown, longitude: unknown): string | null {
+export function buildLocationLink(latitude: unknown, longitude: unknown): string | null {
   if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
     return null;
   }
@@ -93,8 +92,8 @@ export async function dispatchPendingWhatsappAlerts(
   dmsMessaging: DmsMessagingClient
 ): Promise<DispatchResult> {
 
-  const config = await prisma.whatsappAlertConfig.findUnique({
-    where: { id: ALERT_CONFIG_ID }
+  const config = await prisma.whatsappAlertConfig.findFirst({
+    where: { active: true }
   });
 
   if (!config?.templateId || !config.accountId) {
@@ -235,4 +234,166 @@ export async function dispatchPendingWhatsappAlerts(
   }
 
   return result;
+}
+
+export interface WhatsappPreview {
+  configured: boolean;
+  phones: string[];
+  message: string | null;
+  unitName: string | null;
+  unitUid: string | null;
+  reason?: string;
+}
+
+/**
+ * Arma (sin enviar) el texto exacto y los números a los que se
+ * mandaría el WhatsApp de un evento puntual. Usado por dos
+ * consumidores que DEBEN ver el mismo texto: la vista previa que pide
+ * el frontend antes de que el usuario confirme el reenvío (evitar
+ * sorpresas tipo "no sabía que iba a mandar esto" — ver incidente
+ * 2026-10-06 donde se reenvió un WhatsApp real sin preview) y
+ * resendWhatsappForEvent, que reutiliza este mismo resultado para
+ * enviar en vez de recalcularlo aparte.
+ */
+export async function buildWhatsappPreview(
+  prisma: PrismaClient,
+  eventId: number
+): Promise<WhatsappPreview> {
+
+  const config = await prisma.whatsappAlertConfig.findFirst({
+    where: { active: true }
+  });
+
+  if (!config?.templateId || !config.accountId) {
+    return {
+      configured: false,
+      phones: [],
+      message: null,
+      unitName: null,
+      unitUid: null,
+      reason: "No hay una plantilla de WhatsApp activa configurada"
+    };
+  }
+
+  const event = await prisma.criticalAlertEvent.findUnique({
+    where: { id: eventId }
+  });
+
+  if (!event) {
+    return { configured: false, phones: [], message: null, unitName: null, unitUid: null, reason: "Evento no encontrado" };
+  }
+
+  if (!event.contactPhone) {
+    return {
+      configured: false,
+      phones: [],
+      message: null,
+      unitName: event.unitName,
+      unitUid: event.unitUid,
+      reason: "El evento no tiene un número de contacto asociado"
+    };
+  }
+
+  const phones = parsePhones(event.contactPhone);
+
+  if (phones.length === 0) {
+    return {
+      configured: false,
+      phones: [],
+      message: null,
+      unitName: event.unitName,
+      unitUid: event.unitUid,
+      reason: "contactPhone vacío tras separar por coma"
+    };
+  }
+
+  const locationLink = buildLocationLink(event.latitude, event.longitude);
+
+  const message =
+    `${event.alertTypeName} — ${event.unitName || event.unitUid} — ` +
+    formatOccurredAt(event.occurredAt) +
+    (locationLink ? ` — Ubicación: ${locationLink}` : "");
+
+  return { configured: true, phones, message, unitName: event.unitName, unitUid: event.unitUid };
+}
+
+export interface ResendResult {
+  success: boolean;
+  message?: string;
+  phones: string[];
+}
+
+/**
+ * Reenvía el WhatsApp de UN evento puntual, disparado a mano desde el
+ * módulo de Alertas del frontend (botón "Reenviar WhatsApp"). A
+ * diferencia de dispatchPendingWhatsappAlerts no aplica
+ * WHATSAPP_DISPATCH_ENABLED_UNIT_UIDS ni exige whatsappStatus null —
+ * es una acción explícita de un usuario root/admin sobre un evento
+ * específico que ya confirmó reenviar (el frontend muestra
+ * buildWhatsappPreview antes de llegar acá), no el despacho
+ * automático/masivo que todavía está acotado mientras se investiga la
+ * entrega.
+ */
+export async function resendWhatsappForEvent(
+  prisma: PrismaClient,
+  dmsMessaging: DmsMessagingClient,
+  eventId: number
+): Promise<ResendResult> {
+
+  const preview = await buildWhatsappPreview(prisma, eventId);
+
+  if (!preview.configured || !preview.message) {
+    return { success: false, message: preview.reason || "No se pudo preparar el mensaje", phones: [] };
+  }
+
+  const config = await prisma.whatsappAlertConfig.findFirst({
+    where: { active: true }
+  });
+
+  if (!config?.templateId || !config.accountId) {
+    return { success: false, message: "No hay una plantilla de WhatsApp activa configurada", phones: [] };
+  }
+
+  const failedPhones: string[] = [];
+
+  for (const phone of preview.phones) {
+
+    try {
+
+      const sendResult = await dmsMessaging.sendMessage({
+        first_name: preview.unitName || preview.unitUid || phone,
+        phone,
+        accountId: config.accountId,
+        channelId: config.channelId || undefined,
+        templateId: config.templateId,
+        templateBody: { "1": preview.message },
+        type: "notification"
+      });
+
+      if (!sendResult.success) {
+        failedPhones.push(`${phone}: ${sendResult.message || sendResult.error || `HTTP ${sendResult.httpStatus}`}`);
+      }
+
+    } catch (error) {
+
+      failedPhones.push(`${phone}: ${(error as Error).message}`);
+    }
+  }
+
+  if (failedPhones.length > 0) {
+
+    await prisma.criticalAlertEvent.update({
+      where: { id: eventId },
+      data: { whatsappStatus: "error", whatsappError: failedPhones.join(" | ") }
+    });
+
+    return { success: false, message: failedPhones.join(" | "), phones: preview.phones };
+  }
+
+  await prisma.criticalAlertEvent.update({
+    where: { id: eventId },
+    data: { whatsappStatus: "sent", whatsappSentAt: new Date(), whatsappError: null }
+  });
+
+  return { success: true, phones: preview.phones };
 }

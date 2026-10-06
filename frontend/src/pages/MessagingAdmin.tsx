@@ -3,11 +3,14 @@ import { useCallback, useEffect, useState } from "react";
 import { AppHeader } from "../components/AppHeader";
 import { ApiError } from "../api/client";
 import {
-  AlertConfig,
+  AlertTemplate,
+  AlertTemplateBody,
   CriticalAlertTypeRow,
-  getAlertConfig,
+  createAlertTemplate,
+  deleteAlertTemplate,
+  listAlertTemplates,
   listCriticalAlertTypes,
-  saveAlertConfig,
+  updateAlertTemplate,
   updateCriticalAlertType
 } from "../api/admin";
 
@@ -102,127 +105,300 @@ function AlertsSubmodule() {
   );
 }
 
+const EMPTY_FORM: AlertTemplateBody = {
+  accountId: null,
+  channelId: null,
+  templateId: null,
+  templateLabel: null,
+  templateText: null,
+  active: false
+};
+
 function TemplateSubmodule() {
-  const [config, setConfig] = useState<AlertConfig | null>(null);
+  const [templates, setTemplates] = useState<AlertTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // null = formulario cerrado, "new" = creando, number = editando ese id
+  const [editing, setEditing] = useState<number | "new" | null>(null);
+  const [form, setForm] = useState<AlertTemplateBody>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
-  const [accountId, setAccountId] = useState("");
-  const [channelId, setChannelId] = useState("");
-  const [templateId, setTemplateId] = useState("");
-  const [templateLabel, setTemplateLabel] = useState("");
-  const [templateText, setTemplateText] = useState("");
-  const [active, setActive] = useState(false);
+  const [actionId, setActionId] = useState<number | null>(null);
 
-  useEffect(() => {
-    getAlertConfig()
-      .then((response) => {
-        const c = response.data;
-        setConfig(c);
-        setAccountId(c.accountId || "");
-        setChannelId(c.channelId || "");
-        setTemplateId(c.templateId || "");
-        setTemplateLabel(c.templateLabel || "");
-        setTemplateText(c.templateText || "");
-        setActive(c.active);
-      })
-      .catch((err) => {
-        setError(err instanceof ApiError ? err.message : "No se pudo conectar con el servidor");
-      })
-      .finally(() => setLoading(false));
-  }, []);
-
-  async function handleSave(event: React.FormEvent) {
-    event.preventDefault();
-    setSaving(true);
-    setSaveMessage(null);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
 
     try {
-      const response = await saveAlertConfig({
-        accountId: accountId.trim() || null,
-        channelId: channelId.trim() || null,
-        templateId: templateId.trim() || null,
-        templateLabel: templateLabel.trim() || null,
-        templateText: templateText.trim() || null,
-        active
-      });
-      setConfig(response.data);
-      setSaveMessage("Guardado correctamente");
+      const response = await listAlertTemplates();
+      setTemplates(response.data);
     } catch (err) {
-      setSaveMessage(err instanceof ApiError ? err.message : "No se pudo guardar");
+      setError(err instanceof ApiError ? err.message : "No se pudo conectar con el servidor");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function openCreate() {
+    setForm(EMPTY_FORM);
+    setFormError(null);
+    setEditing("new");
+  }
+
+  function openEdit(template: AlertTemplate) {
+    setForm({
+      accountId: template.accountId,
+      channelId: template.channelId,
+      templateId: template.templateId,
+      templateLabel: template.templateLabel,
+      templateText: template.templateText,
+      active: template.active
+    });
+    setFormError(null);
+    setEditing(template.id);
+  }
+
+  function closeForm() {
+    setEditing(null);
+    setFormError(null);
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setFormError(null);
+
+    const body: AlertTemplateBody = {
+      accountId: form.accountId?.trim() || null,
+      channelId: form.channelId?.trim() || null,
+      templateId: form.templateId?.trim() || null,
+      templateLabel: form.templateLabel?.trim() || null,
+      templateText: form.templateText?.trim() || null,
+      active: form.active
+    };
+
+    try {
+      if (editing === "new") {
+        const response = await createAlertTemplate(body);
+        setTemplates((prev) => {
+          const next = response.data.active ? prev.map((t) => ({ ...t, active: false })) : prev;
+          return [...next, response.data];
+        });
+      } else if (typeof editing === "number") {
+        const response = await updateAlertTemplate(editing, body);
+        setTemplates((prev) =>
+          prev.map((t) => {
+            if (t.id === response.data.id) return response.data;
+            return response.data.active ? { ...t, active: false } : t;
+          })
+        );
+      }
+      setEditing(null);
+    } catch (err) {
+      setFormError(err instanceof ApiError ? err.message : "No se pudo guardar la plantilla");
     } finally {
       setSaving(false);
     }
   }
 
-  if (loading) {
-    return <div className="table-empty">Cargando configuración...</div>;
+  async function handleSetActive(template: AlertTemplate) {
+    if (template.active) return;
+
+    setActionId(template.id);
+
+    try {
+      const response = await updateAlertTemplate(template.id, { active: true });
+      setTemplates((prev) =>
+        prev.map((t) => {
+          if (t.id === response.data.id) return response.data;
+          return { ...t, active: false };
+        })
+      );
+    } catch (err) {
+      window.alert(err instanceof ApiError ? err.message : "No se pudo marcar como activa");
+    } finally {
+      setActionId(null);
+    }
   }
+
+  async function handleDelete(template: AlertTemplate) {
+    if (!window.confirm(`¿Eliminar la plantilla "${template.templateLabel || template.id}"?`)) return;
+
+    setActionId(template.id);
+
+    try {
+      await deleteAlertTemplate(template.id);
+      setTemplates((prev) => prev.filter((t) => t.id !== template.id));
+    } catch (err) {
+      window.alert(err instanceof ApiError ? err.message : "No se pudo eliminar la plantilla");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  const activeTemplate = templates.find((t) => t.active);
 
   return (
     <>
       <p className="submodule-help">
-        Datos de la plantilla de WhatsApp (DMS SMART) usada para notificar
-        alertas críticas. <code>templateId</code> queda pendiente hasta tener
-        la plantilla aprobada — mientras esté vacío, el envío automático no
-        se activará aunque marques alertas arriba.
+        Plantillas de WhatsApp (DMS SMART) disponibles para notificar alertas
+        críticas (ver módulo Alertas para elegir qué alertas disparan el
+        envío). Solo una plantilla puede estar <strong>activa</strong> a la
+        vez — es la que se usa al despachar alertas.
       </p>
 
-      {!config?.templateId && (
+      {!activeTemplate && !loading && (
         <div className="form-warning">
-          Falta el <strong>templateId</strong> — pendiente de confirmar con DMS SMART.
+          No hay ninguna plantilla activa — el envío automático no funcionará
+          hasta marcar una.
         </div>
       )}
 
       {error && <div className="form-error">{error}</div>}
 
-      <form className="inline-panel" onSubmit={handleSave}>
-        <div className="inline-panel-grid">
+      {editing === null && (
+        <button type="button" className="btn-primary" onClick={openCreate}>
+          + Nueva plantilla
+        </button>
+      )}
+
+      {editing !== null && (
+        <form className="inline-panel" onSubmit={handleSubmit}>
+          <div className="inline-panel-grid">
+            <label className="field">
+              <span>accountId</span>
+              <input
+                value={form.accountId || ""}
+                onChange={(e) => setForm((f) => ({ ...f, accountId: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>channelId</span>
+              <input
+                value={form.channelId || ""}
+                onChange={(e) => setForm((f) => ({ ...f, channelId: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>templateId</span>
+              <input
+                value={form.templateId || ""}
+                onChange={(e) => setForm((f) => ({ ...f, templateId: e.target.value }))}
+                placeholder="Pendiente de DMS SMART"
+              />
+            </label>
+            <label className="field">
+              <span>Nombre de la plantilla (referencia)</span>
+              <input
+                value={form.templateLabel || ""}
+                onChange={(e) => setForm((f) => ({ ...f, templateLabel: e.target.value }))}
+              />
+            </label>
+          </div>
+
           <label className="field">
-            <span>accountId</span>
-            <input value={accountId} onChange={(e) => setAccountId(e.target.value)} />
-          </label>
-          <label className="field">
-            <span>channelId</span>
-            <input value={channelId} onChange={(e) => setChannelId(e.target.value)} />
-          </label>
-          <label className="field">
-            <span>templateId</span>
-            <input
-              value={templateId}
-              onChange={(e) => setTemplateId(e.target.value)}
-              placeholder="Pendiente de DMS SMART"
+            <span>Texto de la plantilla (referencia — {"{{1}}"} se reemplaza con el evento)</span>
+            <textarea
+              className="template-textarea"
+              value={form.templateText || ""}
+              onChange={(e) => setForm((f) => ({ ...f, templateText: e.target.value }))}
+              rows={3}
             />
           </label>
-          <label className="field">
-            <span>Nombre de la plantilla (referencia)</span>
-            <input value={templateLabel} onChange={(e) => setTemplateLabel(e.target.value)} />
+
+          <label className="company-check">
+            <input
+              type="checkbox"
+              checked={form.active}
+              onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))}
+            />
+            Activa (al guardar, desactiva cualquier otra plantilla — requiere templateId)
           </label>
-        </div>
 
-        <label className="field">
-          <span>Texto de la plantilla (referencia — {"{{1}}"} se reemplaza con el evento)</span>
-          <textarea
-            className="template-textarea"
-            value={templateText}
-            onChange={(e) => setTemplateText(e.target.value)}
-            rows={3}
-          />
-        </label>
+          {formError && <div className="form-error">{formError}</div>}
 
-        <label className="company-check">
-          <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
-          Activo (habilita el envío automático — requiere templateId)
-        </label>
+          <div className="dashboard-toolbar">
+            <button type="submit" className="btn-primary" disabled={saving}>
+              {saving ? "Guardando..." : "Guardar plantilla"}
+            </button>
+            <button type="button" className="btn-secondary" onClick={closeForm} disabled={saving}>
+              Cancelar
+            </button>
+          </div>
+        </form>
+      )}
 
-        {saveMessage && <div className="dashboard-meta">{saveMessage}</div>}
+      <div className="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>templateId</th>
+              <th>accountId</th>
+              <th>channelId</th>
+              <th>Activa</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && templates.length === 0 && (
+              <tr><td colSpan={6} className="table-empty">Cargando plantillas...</td></tr>
+            )}
 
-        <button type="submit" className="btn-primary" disabled={saving}>
-          {saving ? "Guardando..." : "Guardar configuración"}
-        </button>
-      </form>
+            {!loading && templates.length === 0 && (
+              <tr><td colSpan={6} className="table-empty">No hay plantillas creadas todavía.</td></tr>
+            )}
+
+            {templates.map((template) => (
+              <tr key={template.id}>
+                <td className="unit-name">{template.templateLabel || "—"}</td>
+                <td>{template.templateId || "—"}</td>
+                <td>{template.accountId || "—"}</td>
+                <td>{template.channelId || "—"}</td>
+                <td>
+                  {template.active ? (
+                    <span className="badge badge-online">Activa</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={actionId === template.id}
+                      onClick={() => handleSetActive(template)}
+                    >
+                      Marcar como activa
+                    </button>
+                  )}
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={actionId === template.id}
+                    onClick={() => openEdit(template)}
+                  >
+                    Editar
+                  </button>
+                  {" "}
+                  <button
+                    type="button"
+                    className="btn-danger-text"
+                    disabled={actionId === template.id}
+                    onClick={() => handleDelete(template)}
+                  >
+                    Eliminar
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }

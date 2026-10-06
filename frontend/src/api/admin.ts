@@ -225,9 +225,85 @@ export function updateCriticalAlertType(id: number, body: { notifyWhatsapp?: boo
   });
 }
 
-// ---------- Mensajería: configuración de plantilla (solo root) ----------
+// ---------- Alertas: eventos detectados ----------
 
-export interface AlertConfig {
+export interface CriticalAlertEventRow {
+  id: number;
+  alertTypeCode: string;
+  alertTypeName: string;
+  unitUid: string;
+  unitName: string | null;
+  unitImei: string | null;
+  companyUid: string | null;
+  contactPhone: string | null;
+  driverName: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  address: string | null;
+  speed: number | null;
+  heading: number | null;
+  description: string | null;
+  occurredAt: string;
+  createdAt: string;
+  whatsappStatus: string | null;
+  whatsappSentAt: string | null;
+  whatsappError: string | null;
+  read: boolean;
+  readAt: string | null;
+}
+
+export function listCriticalAlertEvents(params: {
+  page: number;
+  limit: number;
+  search?: string;
+  alertTypeCode?: string;
+  unitUid?: string;
+  read?: boolean;
+}) {
+  const qs = new URLSearchParams({ page: String(params.page), limit: String(params.limit) });
+  if (params.search) qs.set("search", params.search);
+  if (params.alertTypeCode) qs.set("alertTypeCode", params.alertTypeCode);
+  if (params.unitUid) qs.set("unitUid", params.unitUid);
+  if (params.read !== undefined) qs.set("read", String(params.read));
+  return apiRequest<Paginated<CriticalAlertEventRow>>(`/api/v1/tracking/critical-alerts/events?${qs.toString()}`);
+}
+
+export function markCriticalAlertEventRead(id: number, read: boolean) {
+  return apiRequest<{ success: boolean; data: CriticalAlertEventRow }>(
+    `/api/v1/tracking/critical-alerts/events/${id}`,
+    { method: "PATCH", body: { read } }
+  );
+}
+
+export function resendCriticalAlertWhatsapp(id: number) {
+  return apiRequest<{ success: boolean; data: { success: boolean; phones: string[] } }>(
+    `/api/v1/tracking/critical-alerts/events/${id}/resend-whatsapp`,
+    { method: "POST" }
+  );
+}
+
+export interface WhatsappPreview {
+  configured: boolean;
+  phones: string[];
+  message: string | null;
+  unitName: string | null;
+  unitUid: string | null;
+  reason?: string;
+}
+
+export function previewCriticalAlertWhatsapp(id: number) {
+  return apiRequest<{ success: boolean; data: WhatsappPreview }>(
+    `/api/v1/tracking/critical-alerts/events/${id}/resend-whatsapp`
+  );
+}
+
+export function countUnreadCriticalAlertEvents() {
+  return listCriticalAlertEvents({ page: 1, limit: 1, read: false });
+}
+
+// ---------- Mensajería: plantillas de WhatsApp (solo root) ----------
+
+export interface AlertTemplate {
   id: number;
   accountId: string | null;
   channelId: string | null;
@@ -235,16 +311,40 @@ export interface AlertConfig {
   templateLabel: string | null;
   templateText: string | null;
   active: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export function getAlertConfig() {
-  return apiRequest<{ success: boolean; data: AlertConfig }>("/api/v1/messaging/alert-config");
+export type AlertTemplateBody = {
+  accountId: string | null;
+  channelId: string | null;
+  templateId: string | null;
+  templateLabel: string | null;
+  templateText: string | null;
+  active: boolean;
+};
+
+export function listAlertTemplates() {
+  return apiRequest<{ success: boolean; data: AlertTemplate[] }>("/api/v1/messaging/alert-templates");
 }
 
-export function saveAlertConfig(body: Omit<AlertConfig, "id">) {
-  return apiRequest<{ success: boolean; data: AlertConfig }>("/api/v1/messaging/alert-config", {
-    method: "PUT",
+export function createAlertTemplate(body: AlertTemplateBody) {
+  return apiRequest<{ success: boolean; data: AlertTemplate }>("/api/v1/messaging/alert-templates", {
+    method: "POST",
     body
+  });
+}
+
+export function updateAlertTemplate(id: number, body: Partial<AlertTemplateBody>) {
+  return apiRequest<{ success: boolean; data: AlertTemplate }>(`/api/v1/messaging/alert-templates/${id}`, {
+    method: "PATCH",
+    body
+  });
+}
+
+export function deleteAlertTemplate(id: number) {
+  return apiRequest<{ success: boolean }>(`/api/v1/messaging/alert-templates/${id}`, {
+    method: "DELETE"
   });
 }
 

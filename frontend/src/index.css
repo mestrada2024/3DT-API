@@ -300,6 +300,10 @@ tbody tr:last-child td {
   color: var(--color-unknown);
 }
 
+.row-unread {
+  font-weight: 600;
+}
+
 .battery {
   font-weight: 600;
   font-size: 13px;
@@ -387,6 +391,32 @@ tbody tr:last-child td {
 
 .app-nav-caret {
   font-size: 10px;
+}
+
+.app-nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--color-offline);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--color-offline-bg);
+  animation: app-nav-badge-pulse 2s ease-in-out infinite;
+}
+
+@keyframes app-nav-badge-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px var(--color-offline-bg);
+  }
+  50% {
+    box-shadow: 0 0 0 4px var(--color-offline-bg);
+  }
 }
 
 .app-nav-dropdown {

@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
 
     ports:
-      - "3011:3010"
+      - "3010:3010"
 
     env_file:
       - .env
@@ -58,12 +58,13 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # El API ahora escucha HTTP plano en 3011 (puerto interno) — el
-        # puerto 3010 lo toma nginx para TLS, ya que 3DTracking exige
-        # HTTPS en el webhook (ver docs/dms-messaging.md / investigación
-        # 2026-10-05). El frontend sigue sirviéndose por HTTP (3000), así
-        # que llama a la API por HTTP también, en el nuevo puerto 3011.
-        VITE_API_BASE_URL: http://129.80.217.232:3011
+        # nginx termina TLS en el puerto 443 (estándar HTTPS) y hace proxy
+        # interno al puerto 3010, donde escucha la app en HTTP plano dentro
+        # del contenedor. Se movió de 3011 a 443 el 2026-10-06 porque 3DT
+        # solo permite tráfico saliente de webhooks hacia el puerto HTTPS
+        # estándar (ver docs/dms-messaging.md). El frontend llama a la API
+        # por HTTPS en el 443, pasando por nginx.
+        VITE_API_BASE_URL: https://129.80.217.232
 
     container_name: dms-frontend
 

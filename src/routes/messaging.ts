@@ -15,7 +15,7 @@ import { requireRoot } from "../services/access-control.service";
 import { dispatchPendingWhatsappAlerts } from "../services/whatsapp-dispatch.service";
 
 
-interface UpdateAlertConfigBody {
+interface CreateAlertTemplateBody {
   accountId?: string;
   channelId?: string;
   templateId?: string;
@@ -24,7 +24,14 @@ interface UpdateAlertConfigBody {
   active?: boolean;
 }
 
-const ALERT_CONFIG_ID = 1;
+interface UpdateAlertTemplateBody {
+  accountId?: string;
+  channelId?: string;
+  templateId?: string;
+  templateLabel?: string;
+  templateText?: string;
+  active?: boolean;
+}
 
 /**
  * POST /api/v1/messaging/send: envío de plantillas de WhatsApp vía el
@@ -109,16 +116,16 @@ const messagingRoutes:
     );
 
     /**
-     * GET /api/v1/messaging/alert-config
+     * GET /api/v1/messaging/alert-templates
      *
-     * Configuración (una sola fila) de la plantilla de WhatsApp usada
+     * Lista todas las plantillas de WhatsApp (DMS SMART) disponibles
      * para notificar alertas críticas — ver
      * CriticalAlertType.notifyWhatsapp y docs/dms-messaging.md. Root
-     * únicamente: incluye accountId/channelId, configuración global de
-     * la cuenta, no por empresa.
+     * únicamente. A lo sumo una tiene active=true; esa es la que usa
+     * dispatchPendingWhatsappAlerts.
      */
     app.get(
-      "/messaging/alert-config",
+      "/messaging/alert-templates",
       {
         preHandler: async (request, reply) => {
 
@@ -131,21 +138,13 @@ const messagingRoutes:
 
         try {
 
-          const config = await app.prisma.whatsappAlertConfig.findUnique({
-            where: { id: ALERT_CONFIG_ID }
+          const templates = await app.prisma.whatsappAlertConfig.findMany({
+            orderBy: { createdAt: "asc" }
           });
 
           return reply.send({
             success: true,
-            data: config || {
-              id: ALERT_CONFIG_ID,
-              accountId: null,
-              channelId: null,
-              templateId: null,
-              templateLabel: null,
-              templateText: null,
-              active: false
-            }
+            data: templates
           });
 
         } catch (error) {
@@ -157,24 +156,25 @@ const messagingRoutes:
             .send({
               success: false,
               error: "INTERNAL_SERVER_ERROR",
-              message: "Error obteniendo la configuración de plantilla"
+              message: "Error obteniendo las plantillas"
             });
         }
       }
     );
 
     /**
-     * PUT /api/v1/messaging/alert-config
+     * POST /api/v1/messaging/alert-templates
      *
-     * Crea/actualiza la configuración. templateId puede quedar null
-     * hasta tener la plantilla real aprobada por DMS SMART — active
-     * debería quedar en false mientras tanto (no hay wiring automático
-     * de envío todavía, esto solo guarda la configuración).
+     * Crea una nueva plantilla. templateId puede quedar null hasta
+     * tener la plantilla real aprobada por DMS SMART. Si se crea con
+     * active=true, desactiva cualquier otra plantilla (solo puede
+     * haber una activa a la vez — se aplica aquí, no hay constraint
+     * de DB para esto en MariaDB).
      */
-    app.put<{
-      Body: UpdateAlertConfigBody;
+    app.post<{
+      Body: CreateAlertTemplateBody;
     }>(
-      "/messaging/alert-config",
+      "/messaging/alert-templates",
       {
         preHandler: async (request, reply) => {
 
@@ -189,10 +189,6 @@ const messagingRoutes:
 
         try {
 
-          const before = await app.prisma.whatsappAlertConfig.findUnique({
-            where: { id: ALERT_CONFIG_ID }
-          });
-
           const data = {
             accountId: request.body.accountId?.trim() || null,
             channelId: request.body.channelId?.trim() || null,
@@ -202,17 +198,125 @@ const messagingRoutes:
             active: request.body.active ?? false
           };
 
-          const updated = await app.prisma.whatsappAlertConfig.upsert({
-            where: { id: ALERT_CONFIG_ID },
-            create: { id: ALERT_CONFIG_ID, ...data },
-            update: data
+          const created = await app.prisma.$transaction(async (tx) => {
+
+            if (data.active) {
+              await tx.whatsappAlertConfig.updateMany({
+                where: { active: true },
+                data: { active: false }
+              });
+            }
+
+            return tx.whatsappAlertConfig.create({ data });
           });
 
           await logAction(app.prisma, {
             ...actor,
             module: "messaging",
-            action: "update-alert-config",
-            resource: "alert-config",
+            action: "create-alert-template",
+            resource: String(created.id),
+            success: true,
+            afterState: created
+          });
+
+          return reply.send({
+            success: true,
+            data: created
+          });
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          return reply
+            .code(500)
+            .send({
+              success: false,
+              error: "INTERNAL_SERVER_ERROR",
+              message: "Error creando la plantilla"
+            });
+        }
+      }
+    );
+
+    /**
+     * PATCH /api/v1/messaging/alert-templates/:id
+     *
+     * Actualiza una plantilla existente (campos sueltos). Si se
+     * manda active=true, desactiva cualquier otra plantilla dentro
+     * de la misma transacción.
+     */
+    app.patch<{
+      Params: { id: string };
+      Body: UpdateAlertTemplateBody;
+    }>(
+      "/messaging/alert-templates/:id",
+      {
+        preHandler: async (request, reply) => {
+
+          await request.jwtVerify();
+          await requireRoot(request, reply);
+
+        }
+      },
+      async (request, reply) => {
+
+        const actor = getActorFromRequest(request);
+        const id = Number(request.params.id);
+
+        if (!Number.isInteger(id)) {
+
+          return reply
+            .code(400)
+            .send({
+              success: false,
+              error: "VALIDATION_ERROR",
+              message: "id inválido"
+            });
+        }
+
+        try {
+
+          const before = await app.prisma.whatsappAlertConfig.findUnique({ where: { id } });
+
+          if (!before) {
+
+            return reply
+              .code(404)
+              .send({
+                success: false,
+                error: "NOT_FOUND",
+                message: "Plantilla no encontrada"
+              });
+          }
+
+          const body = request.body;
+          const data: Record<string, unknown> = {};
+
+          if (body.accountId !== undefined) data.accountId = body.accountId.trim() || null;
+          if (body.channelId !== undefined) data.channelId = body.channelId.trim() || null;
+          if (body.templateId !== undefined) data.templateId = body.templateId.trim() || null;
+          if (body.templateLabel !== undefined) data.templateLabel = body.templateLabel.trim() || null;
+          if (body.templateText !== undefined) data.templateText = body.templateText.trim() || null;
+          if (body.active !== undefined) data.active = body.active;
+
+          const updated = await app.prisma.$transaction(async (tx) => {
+
+            if (data.active === true) {
+              await tx.whatsappAlertConfig.updateMany({
+                where: { active: true, id: { not: id } },
+                data: { active: false }
+              });
+            }
+
+            return tx.whatsappAlertConfig.update({ where: { id }, data });
+          });
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "messaging",
+            action: "update-alert-template",
+            resource: String(id),
             success: true,
             beforeState: before,
             afterState: updated
@@ -232,7 +336,81 @@ const messagingRoutes:
             .send({
               success: false,
               error: "INTERNAL_SERVER_ERROR",
-              message: "Error guardando la configuración de plantilla"
+              message: "Error actualizando la plantilla"
+            });
+        }
+      }
+    );
+
+    /**
+     * DELETE /api/v1/messaging/alert-templates/:id
+     */
+    app.delete<{
+      Params: { id: string };
+    }>(
+      "/messaging/alert-templates/:id",
+      {
+        preHandler: async (request, reply) => {
+
+          await request.jwtVerify();
+          await requireRoot(request, reply);
+
+        }
+      },
+      async (request, reply) => {
+
+        const actor = getActorFromRequest(request);
+        const id = Number(request.params.id);
+
+        if (!Number.isInteger(id)) {
+
+          return reply
+            .code(400)
+            .send({
+              success: false,
+              error: "VALIDATION_ERROR",
+              message: "id inválido"
+            });
+        }
+
+        try {
+
+          const before = await app.prisma.whatsappAlertConfig.findUnique({ where: { id } });
+
+          if (!before) {
+
+            return reply
+              .code(404)
+              .send({
+                success: false,
+                error: "NOT_FOUND",
+                message: "Plantilla no encontrada"
+              });
+          }
+
+          await app.prisma.whatsappAlertConfig.delete({ where: { id } });
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "messaging",
+            action: "delete-alert-template",
+            resource: String(id),
+            success: true,
+            beforeState: before
+          });
+
+          return reply.send({ success: true });
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          return reply
+            .code(500)
+            .send({
+              success: false,
+              error: "INTERNAL_SERVER_ERROR",
+              message: "Error eliminando la plantilla"
             });
         }
       }

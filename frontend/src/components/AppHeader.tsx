@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
+import { countUnreadCriticalAlertEvents } from "../api/admin";
+
+const UNREAD_POLL_INTERVAL_MS = 45000;
 
 interface NavItem {
   to: string;
@@ -29,6 +32,7 @@ const ADMIN_GROUP_ITEMS_BASE: NavItem[] = [
 const ADMIN_GROUP_ITEM_ROOT_ONLY: NavItem = { to: "/admin/usuarios", label: "Usuarios" };
 
 const MENSAJERIA_ITEM: NavItem = { to: "/admin/mensajeria", label: "Mensajería" };
+const ALERTAS_ITEM: NavItem = { to: "/alertas", label: "Alertas" };
 
 const ESTADISTICAS_GROUP: NavGroup = {
   label: "Estadísticas",
@@ -96,6 +100,32 @@ export function AppHeader() {
     items: isRoot ? [...ADMIN_GROUP_ITEMS_BASE, ADMIN_GROUP_ITEM_ROOT_ONLY] : ADMIN_GROUP_ITEMS_BASE
   };
 
+  const [unreadAlerts, setUnreadAlerts] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function pollUnread() {
+      try {
+        const response = await countUnreadCriticalAlertEvents();
+        if (!cancelled) {
+          setUnreadAlerts(response.pagination.total);
+        }
+      } catch {
+        // Silencioso: el badge es informativo, no bloquea la navegación
+        // si falla una consulta de polling puntual.
+      }
+    }
+
+    pollUnread();
+    const interval = setInterval(pollUnread, UNREAD_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
   return (
     <header className="app-header">
       <div className="app-header-left">
@@ -112,6 +142,17 @@ export function AppHeader() {
           </NavLink>
 
           <NavDropdown group={FLOTAS_GROUP} />
+
+          <NavLink
+            to={ALERTAS_ITEM.to}
+            className={({ isActive }) =>
+              isActive ? "app-nav-link app-nav-link-active" : "app-nav-link"
+            }
+          >
+            {ALERTAS_ITEM.label}
+            {unreadAlerts > 0 && <span className="app-nav-badge">{unreadAlerts > 99 ? "99+" : unreadAlerts}</span>}
+          </NavLink>
+
           <NavDropdown group={ESTADISTICAS_GROUP} />
           <NavDropdown group={adminGroup} />
 

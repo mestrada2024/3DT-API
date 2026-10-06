@@ -6,7 +6,11 @@ import {
   scanForCriticalAlerts
 } from "../services/critical-alert.service";
 
-import { requireRoot } from "../services/access-control.service";
+import { buildWhatsappPreview, resendWhatsappForEvent } from "../services/whatsapp-dispatch.service";
+
+import { getAllowedCompanyUids, requireRoot, requireWrite } from "../services/access-control.service";
+
+import { getActorFromRequest, logAction } from "../services/audit-log.service";
 
 interface CriticalAlertIdParams {
   id: string;
@@ -30,6 +34,15 @@ interface CriticalAlertEventsListQuery {
   alertTypeCode?: string;
   unitUid?: string;
   search?: string;
+  read?: string;
+}
+
+interface CriticalAlertEventIdParams {
+  id: string;
+}
+
+interface UpdateCriticalAlertEventBody {
+  read?: boolean;
 }
 
 /**
@@ -283,6 +296,8 @@ const criticalAlertRoutes:
           const where: {
             alertTypeCode?: string;
             unitUid?: string;
+            companyUid?: { in: string[] };
+            read?: boolean;
             OR?: Array<{
               unitName?: { contains: string };
               unitImei?: { contains: string };
@@ -290,12 +305,33 @@ const criticalAlertRoutes:
             }>;
           } = {};
 
+          /**
+           * root ve todos los eventos; admin/user solo los de sus
+           * empresas asignadas (UserCompany) — mismo criterio que
+           * units.ts. Cero empresas asignadas = cero eventos.
+           */
+          const allowedCompanyUids = await getAllowedCompanyUids(
+            app.prisma,
+            request.user.sub,
+            request.user.role
+          );
+
+          if (allowedCompanyUids !== null) {
+            where.companyUid = { in: allowedCompanyUids };
+          }
+
           if (request.query.alertTypeCode) {
             where.alertTypeCode = request.query.alertTypeCode.trim();
           }
 
           if (request.query.unitUid) {
             where.unitUid = request.query.unitUid.trim();
+          }
+
+          if (request.query.read === "true") {
+            where.read = true;
+          } else if (request.query.read === "false") {
+            where.read = false;
           }
 
           if (request.query.search) {
@@ -456,6 +492,255 @@ const criticalAlertRoutes:
               success: false,
               error: "INTERNAL_SERVER_ERROR",
               message: "Error actualizando el tipo de alerta"
+            });
+        }
+      }
+    );
+
+    /**
+     * PATCH /api/v1/tracking/critical-alerts/events/:id
+     *
+     * Marca (o desmarca) un evento de alerta como leído — para el
+     * módulo de Alertas del frontend. No requiere rol root: cualquier
+     * usuario autenticado con acceso a la empresa del evento puede
+     * acusar lectura (es un ack de UI, no un cambio de configuración).
+     * Independiente de whatsappStatus.
+     */
+    app.patch<{
+      Params: CriticalAlertEventIdParams;
+      Body: UpdateCriticalAlertEventBody;
+    }>(
+      "/critical-alerts/events/:id",
+      {
+        preHandler: async (request) => {
+
+          await request.jwtVerify();
+
+        }
+      },
+      async (request, reply) => {
+
+        try {
+
+          const id = parseInt(request.params.id, 10);
+
+          if (isNaN(id)) {
+            return reply
+              .code(400)
+              .send({
+                success: false,
+                error: "INVALID_ID",
+                message: "id inválido"
+              });
+          }
+
+          const event = await app.prisma.criticalAlertEvent.findUnique({
+            where: { id }
+          });
+
+          if (!event) {
+            return reply
+              .code(404)
+              .send({
+                success: false,
+                error: "NOT_FOUND",
+                message: "Evento de alerta no encontrado"
+              });
+          }
+
+          const allowedCompanyUids = await getAllowedCompanyUids(
+            app.prisma,
+            request.user.sub,
+            request.user.role
+          );
+
+          if (allowedCompanyUids !== null && !allowedCompanyUids.includes(event.companyUid || "")) {
+            return reply
+              .code(404)
+              .send({
+                success: false,
+                error: "NOT_FOUND",
+                message: "Evento de alerta no encontrado"
+              });
+          }
+
+          const read = request.body.read ?? true;
+
+          const updated = await app.prisma.criticalAlertEvent.update({
+            where: { id },
+            data: { read, readAt: read ? new Date() : null }
+          });
+
+          return reply.send({
+            success: true,
+            data: updated
+          });
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          return reply
+            .code(500)
+            .send({
+              success: false,
+              error: "INTERNAL_SERVER_ERROR",
+              message: "Error actualizando el evento de alerta"
+            });
+        }
+      }
+    );
+
+    /**
+     * POST /api/v1/tracking/critical-alerts/events/:id/resend-whatsapp
+     *
+     * Reenvía manualmente el mensaje de WhatsApp de un evento puntual
+     * — a diferencia de dispatchPendingWhatsappAlerts (automático/
+     * masivo, ver whatsapp-dispatch.service.ts), esta acción es
+     * explícita, por evento, y por eso no aplica el filtro de unidad
+     * WHATSAPP_DISPATCH_ENABLED_UNIT_UIDS ni exige whatsappStatus
+     * null (permite reenviar aunque ya se haya enviado o haya
+     * fallado antes). Requiere root o admin (requireWrite) — a
+     * diferencia de /messaging/dispatch-alerts (root únicamente),
+     * esta acción puntual sobre una alerta visible en el módulo de
+     * Alertas también la puede disparar un admin, por pedido del
+     * usuario 2026-10-06.
+     */
+    /**
+     * GET /api/v1/tracking/critical-alerts/events/:id/resend-whatsapp
+     *
+     * Vista previa SIN enviar — devuelve el texto exacto y los
+     * números a los que se mandaría el WhatsApp si se confirma el
+     * reenvío. El frontend la consulta para mostrarla en el diálogo
+     * de confirmación antes de llamar al POST de abajo (ver
+     * buildWhatsappPreview en whatsapp-dispatch.service.ts — ambos
+     * endpoints comparten la misma función para que el texto
+     * mostrado sea exactamente el que se envía).
+     */
+    app.get<{
+      Params: CriticalAlertEventIdParams;
+    }>(
+      "/critical-alerts/events/:id/resend-whatsapp",
+      {
+        preHandler: async (request, reply) => {
+
+          await request.jwtVerify();
+          await requireWrite(request, reply);
+
+        }
+      },
+      async (request, reply) => {
+
+        const id = parseInt(request.params.id, 10);
+
+        if (isNaN(id)) {
+          return reply
+            .code(400)
+            .send({
+              success: false,
+              error: "INVALID_ID",
+              message: "id inválido"
+            });
+        }
+
+        try {
+
+          const preview = await buildWhatsappPreview(app.prisma, id);
+
+          return reply.send({
+            success: true,
+            data: preview
+          });
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          return reply
+            .code(500)
+            .send({
+              success: false,
+              error: "INTERNAL_SERVER_ERROR",
+              message: "Error preparando la vista previa del mensaje"
+            });
+        }
+      }
+    );
+
+    app.post<{
+      Params: CriticalAlertEventIdParams;
+    }>(
+      "/critical-alerts/events/:id/resend-whatsapp",
+      {
+        preHandler: async (request, reply) => {
+
+          await request.jwtVerify();
+          await requireWrite(request, reply);
+
+        }
+      },
+      async (request, reply) => {
+
+        const actor = getActorFromRequest(request);
+        const id = parseInt(request.params.id, 10);
+
+        if (isNaN(id)) {
+          return reply
+            .code(400)
+            .send({
+              success: false,
+              error: "INVALID_ID",
+              message: "id inválido"
+            });
+        }
+
+        try {
+
+          const result = await resendWhatsappForEvent(app.prisma, app.dmsMessaging, id);
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "messaging",
+            action: "resend-alert-whatsapp",
+            resource: String(id),
+            success: result.success,
+            message: result.message || null
+          });
+
+          if (!result.success) {
+            return reply
+              .code(422)
+              .send({
+                success: false,
+                error: "WHATSAPP_SEND_FAILED",
+                message: result.message || "No se pudo reenviar el mensaje de WhatsApp"
+              });
+          }
+
+          return reply.send({
+            success: true,
+            data: result
+          });
+
+        } catch (error) {
+
+          app.log.error(error);
+
+          await logAction(app.prisma, {
+            ...actor,
+            module: "messaging",
+            action: "resend-alert-whatsapp",
+            resource: String(id),
+            success: false,
+            message: (error as Error).message
+          });
+
+          return reply
+            .code(500)
+            .send({
+              success: false,
+              error: "INTERNAL_SERVER_ERROR",
+              message: "Error reenviando el mensaje de WhatsApp"
             });
         }
       }
