@@ -141,6 +141,31 @@ export interface CreateUnitBody {
   trackerUid?: string;
 }
 
+// ---------- Rastreo (mapa en vivo) ----------
+
+export interface TrackingUnit {
+  id: number;
+  externalId: string;
+  name: string;
+  plate: string | null;
+  companyUid: string | null;
+  companyName: string | null;
+  status: string;
+  latitude: string | null;
+  longitude: string | null;
+  speed: string | null;
+  lastPositionAt: string | null;
+}
+
+export function listUnitsForTracking(params: { search?: string } = {}) {
+  const qs = new URLSearchParams();
+  if (params.search) qs.set("search", params.search);
+  const query = qs.toString();
+  return apiRequest<{ success: boolean; data: TrackingUnit[] }>(
+    `/api/v1/units/tracking${query ? `?${query}` : ""}`
+  );
+}
+
 export function listUnitsAdmin(params: { page: number; limit: number; search?: string } & SortParams) {
   const qs = new URLSearchParams({ page: String(params.page), limit: String(params.limit) });
   if (params.search) qs.set("search", params.search);
@@ -259,12 +284,13 @@ export function listCriticalAlertEvents(params: {
   alertTypeCode?: string;
   unitUid?: string;
   read?: boolean;
-}) {
+} & SortParams) {
   const qs = new URLSearchParams({ page: String(params.page), limit: String(params.limit) });
   if (params.search) qs.set("search", params.search);
   if (params.alertTypeCode) qs.set("alertTypeCode", params.alertTypeCode);
   if (params.unitUid) qs.set("unitUid", params.unitUid);
   if (params.read !== undefined) qs.set("read", String(params.read));
+  applySort(qs, params);
   return apiRequest<Paginated<CriticalAlertEventRow>>(`/api/v1/tracking/critical-alerts/events?${qs.toString()}`);
 }
 
@@ -275,10 +301,10 @@ export function markCriticalAlertEventRead(id: number, read: boolean) {
   );
 }
 
-export function resendCriticalAlertWhatsapp(id: number) {
+export function resendCriticalAlertWhatsapp(id: number, phone?: string) {
   return apiRequest<{ success: boolean; data: { success: boolean; phones: string[] } }>(
     `/api/v1/tracking/critical-alerts/events/${id}/resend-whatsapp`,
-    { method: "POST" }
+    { method: "POST", body: phone ? { phone } : undefined }
   );
 }
 

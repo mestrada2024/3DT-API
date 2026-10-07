@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { AppHeader } from "../components/AppHeader";
 import { SortableHeader, SortDirection } from "../components/SortableHeader";
@@ -22,11 +23,13 @@ export function UnitsAdmin() {
   const { user } = useAuth();
   const canWrite = user?.role === "root" || user?.role === "admin";
 
+  const [searchParams] = useSearchParams();
+
   const [units, setUnits] = useState<Unit[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(() => searchParams.get("search") || "");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 

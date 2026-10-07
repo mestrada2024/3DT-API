@@ -33,6 +33,7 @@ const ADMIN_GROUP_ITEM_ROOT_ONLY: NavItem = { to: "/admin/usuarios", label: "Usu
 
 const MENSAJERIA_ITEM: NavItem = { to: "/admin/mensajeria", label: "Mensajería" };
 const ALERTAS_ITEM: NavItem = { to: "/alertas", label: "Alertas" };
+const RASTREO_ITEM: NavItem = { to: "/rastreo", label: "Rastreo" };
 
 const ESTADISTICAS_GROUP: NavGroup = {
   label: "Estadísticas",
@@ -142,6 +143,15 @@ export function AppHeader() {
           </NavLink>
 
           <NavDropdown group={FLOTAS_GROUP} />
+
+          <NavLink
+            to={RASTREO_ITEM.to}
+            className={({ isActive }) =>
+              isActive ? "app-nav-link app-nav-link-active" : "app-nav-link"
+            }
+          >
+            {RASTREO_ITEM.label}
+          </NavLink>
 
           <NavLink
             to={ALERTAS_ITEM.to}

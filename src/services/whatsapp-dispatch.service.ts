@@ -246,14 +246,20 @@ export interface WhatsappPreview {
 }
 
 /**
- * Arma (sin enviar) el texto exacto y los números a los que se
- * mandaría el WhatsApp de un evento puntual. Usado por dos
- * consumidores que DEBEN ver el mismo texto: la vista previa que pide
- * el frontend antes de que el usuario confirme el reenvío (evitar
- * sorpresas tipo "no sabía que iba a mandar esto" — ver incidente
- * 2026-10-06 donde se reenvió un WhatsApp real sin preview) y
- * resendWhatsappForEvent, que reutiliza este mismo resultado para
- * enviar en vez de recalcularlo aparte.
+ * Arma (sin enviar) el texto exacto y los números configurados en la
+ * empresa del evento. Usado por dos consumidores que DEBEN ver el
+ * mismo texto: la vista previa que pide el frontend antes de que el
+ * usuario confirme el reenvío (evitar sorpresas tipo "no sabía que
+ * iba a mandar esto" — ver incidente 2026-10-06 donde se reenvió un
+ * WhatsApp real sin preview) y resendWhatsappForEvent, que reutiliza
+ * este mismo resultado en vez de recalcularlo aparte.
+ *
+ * `message` se arma siempre que haya plantilla activa y el evento
+ * exista, aunque `phones` quede vacío (empresa sin número
+ * configurado) — el frontend permite reenviar a un número escrito a
+ * mano en ese caso (ver resendWhatsappForEvent), y para eso necesita
+ * el texto igual. `configured:false` únicamente cuando no hay
+ * plantilla activa o el evento no existe, no cuando faltan números.
  */
 export async function buildWhatsappPreview(
   prisma: PrismaClient,
@@ -283,36 +289,25 @@ export async function buildWhatsappPreview(
     return { configured: false, phones: [], message: null, unitName: null, unitUid: null, reason: "Evento no encontrado" };
   }
 
-  if (!event.contactPhone) {
-    return {
-      configured: false,
-      phones: [],
-      message: null,
-      unitName: event.unitName,
-      unitUid: event.unitUid,
-      reason: "El evento no tiene un número de contacto asociado"
-    };
-  }
-
-  const phones = parsePhones(event.contactPhone);
-
-  if (phones.length === 0) {
-    return {
-      configured: false,
-      phones: [],
-      message: null,
-      unitName: event.unitName,
-      unitUid: event.unitUid,
-      reason: "contactPhone vacío tras separar por coma"
-    };
-  }
-
   const locationLink = buildLocationLink(event.latitude, event.longitude);
 
   const message =
     `${event.alertTypeName} — ${event.unitName || event.unitUid} — ` +
     formatOccurredAt(event.occurredAt) +
     (locationLink ? ` — Ubicación: ${locationLink}` : "");
+
+  const phones = event.contactPhone ? parsePhones(event.contactPhone) : [];
+
+  if (phones.length === 0) {
+    return {
+      configured: true,
+      phones: [],
+      message,
+      unitName: event.unitName,
+      unitUid: event.unitUid,
+      reason: "La empresa no tiene números de contacto configurados para este evento"
+    };
+  }
 
   return { configured: true, phones, message, unitName: event.unitName, unitUid: event.unitUid };
 }
@@ -333,17 +328,30 @@ export interface ResendResult {
  * buildWhatsappPreview antes de llegar acá), no el despacho
  * automático/masivo que todavía está acotado mientras se investiga la
  * entrega.
+ *
+ * `overridePhone` (pedido explícito del usuario, 2026-10-06): si se
+ * manda, reemplaza por completo a los números configurados en la
+ * empresa — se envía solo a ese destino. Útil para una prueba puntual
+ * o cuando el evento no tiene contactPhone. No modifica
+ * CriticalAlertEvent.contactPhone ni afecta el despacho automático.
  */
 export async function resendWhatsappForEvent(
   prisma: PrismaClient,
   dmsMessaging: DmsMessagingClient,
-  eventId: number
+  eventId: number,
+  overridePhone?: string
 ): Promise<ResendResult> {
 
   const preview = await buildWhatsappPreview(prisma, eventId);
 
   if (!preview.configured || !preview.message) {
     return { success: false, message: preview.reason || "No se pudo preparar el mensaje", phones: [] };
+  }
+
+  const targetPhones = overridePhone?.trim() ? [overridePhone.trim()] : preview.phones;
+
+  if (targetPhones.length === 0) {
+    return { success: false, message: preview.reason || "No hay un número destino", phones: [] };
   }
 
   const config = await prisma.whatsappAlertConfig.findFirst({
@@ -356,7 +364,7 @@ export async function resendWhatsappForEvent(
 
   const failedPhones: string[] = [];
 
-  for (const phone of preview.phones) {
+  for (const phone of targetPhones) {
 
     try {
 
@@ -387,7 +395,7 @@ export async function resendWhatsappForEvent(
       data: { whatsappStatus: "error", whatsappError: failedPhones.join(" | ") }
     });
 
-    return { success: false, message: failedPhones.join(" | "), phones: preview.phones };
+    return { success: false, message: failedPhones.join(" | "), phones: targetPhones };
   }
 
   await prisma.criticalAlertEvent.update({
@@ -395,5 +403,5 @@ export async function resendWhatsappForEvent(
     data: { whatsappStatus: "sent", whatsappSentAt: new Date(), whatsappError: null }
   });
 
-  return { success: true, phones: preview.phones };
+  return { success: true, phones: targetPhones };
 }

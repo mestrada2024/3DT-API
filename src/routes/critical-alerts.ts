@@ -12,6 +12,10 @@ import { getAllowedCompanyUids, requireRoot, requireWrite } from "../services/ac
 
 import { getActorFromRequest, logAction } from "../services/audit-log.service";
 
+import { parseSort } from "../utils/sort";
+
+const ALERT_EVENT_SORTABLE_FIELDS = ["occurredAt", "alertTypeName", "unitName", "whatsappStatus", "read"] as const;
+
 interface CriticalAlertIdParams {
   id: string;
 }
@@ -35,6 +39,8 @@ interface CriticalAlertEventsListQuery {
   unitUid?: string;
   search?: string;
   read?: string;
+  sortBy?: string;
+  sortDir?: string;
 }
 
 interface CriticalAlertEventIdParams {
@@ -346,13 +352,33 @@ const criticalAlertRoutes:
             }
           }
 
+          /**
+           * Sin sortBy explícito (click en una columna del frontend):
+           * orden por defecto con las alertas pendientes de WhatsApp
+           * primero (whatsappStatus NULL ordena primero en ASC) y,
+           * dentro de cada grupo, las más recientes primero — pedido
+           * explícito del usuario 2026-10-06 para no tener que buscar
+           * las pendientes entre las ya enviadas.
+           */
+          const orderBy = request.query.sortBy
+            ? (() => {
+                const { field, direction } = parseSort(
+                  request.query.sortBy,
+                  request.query.sortDir,
+                  ALERT_EVENT_SORTABLE_FIELDS,
+                  "occurredAt"
+                );
+                return { [field]: direction };
+              })()
+            : [{ whatsappStatus: "asc" as const }, { occurredAt: "desc" as const }];
+
           const [events, total] =
             await Promise.all([
               app.prisma.criticalAlertEvent.findMany({
                 where,
                 skip,
                 take: limit,
-                orderBy: { occurredAt: "desc" }
+                orderBy
               }),
 
               app.prisma.criticalAlertEvent.count({
@@ -669,6 +695,7 @@ const criticalAlertRoutes:
 
     app.post<{
       Params: CriticalAlertEventIdParams;
+      Body: { phone?: string };
     }>(
       "/critical-alerts/events/:id/resend-whatsapp",
       {
@@ -696,7 +723,9 @@ const criticalAlertRoutes:
 
         try {
 
-          const result = await resendWhatsappForEvent(app.prisma, app.dmsMessaging, id);
+          const overridePhone = request.body?.phone?.trim() || undefined;
+
+          const result = await resendWhatsappForEvent(app.prisma, app.dmsMessaging, id, overridePhone);
 
           await logAction(app.prisma, {
             ...actor,

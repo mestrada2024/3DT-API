@@ -265,6 +265,96 @@ export default async function unitsRoutes(
     }
   );
 
+  /**
+   * GET /api/v1/units/tracking
+   *
+   * Listado liviano para el módulo de Rastreo (mapa en vivo): todas
+   * las unidades dentro del alcance del usuario (misma regla que el
+   * listado paginado de arriba) en una sola llamada, sin paginar —
+   * un mapa necesita ver todas las unidades a la vez, no 20 por
+   * página. Devuelve solo los campos que el mapa necesita (no
+   * trackerName/syncStatus/etc., que son del módulo de administración
+   * de flotas).
+   *
+   * Parámetros:
+   * ?search=ABC   (nombre o placa)
+   */
+  fastify.get<{
+    Querystring: { search?: string };
+  }>(
+    "/tracking",
+    {
+      preHandler: [fastify.authenticate],
+    },
+    async (request, reply) => {
+
+      try {
+
+        const allowedCompanyUids = await getAllowedCompanyUids(
+          fastify.prisma,
+          request.user.sub,
+          request.user.role
+        );
+
+        const where: {
+          companyUid?: { in: string[] };
+          OR?: Array<{
+            name?: { contains: string };
+            plate?: { contains: string };
+          }>;
+        } = {};
+
+        if (allowedCompanyUids !== null) {
+          where.companyUid = { in: allowedCompanyUids };
+        }
+
+        if (request.query.search) {
+          const search = request.query.search.trim();
+
+          if (search) {
+            where.OR = [
+              { name: { contains: search } },
+              { plate: { contains: search } }
+            ];
+          }
+        }
+
+        const units = await fastify.prisma.unit.findMany({
+          where,
+          select: {
+            id: true,
+            externalId: true,
+            name: true,
+            plate: true,
+            companyUid: true,
+            companyName: true,
+            status: true,
+            latitude: true,
+            longitude: true,
+            speed: true,
+            lastPositionAt: true
+          },
+          orderBy: { name: "asc" },
+          take: 1000
+        });
+
+        return reply.send({
+          success: true,
+          data: units
+        });
+
+      } catch (error) {
+        fastify.log.error(error);
+
+        return reply.status(500).send({
+          success: false,
+          error: "INTERNAL_SERVER_ERROR",
+          message: "Error obteniendo unidades para rastreo",
+        });
+      }
+    }
+  );
+
 
   /**
    * POST /api/v1/units
