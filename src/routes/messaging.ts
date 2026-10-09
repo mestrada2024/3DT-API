@@ -443,7 +443,7 @@ const messagingRoutes:
 
         try {
 
-          const result = await dispatchPendingWhatsappAlerts(app.prisma, app.dmsMessaging);
+          const result = await dispatchPendingWhatsappAlerts(app.prisma, app.dmsMessaging, app.tracking3d);
 
           await logAction(app.prisma, {
             ...actor,

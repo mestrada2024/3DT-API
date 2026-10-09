@@ -67,7 +67,7 @@ export default fp(async (app) => {
         return;
       }
 
-      const result = await dispatchPendingWhatsappAlerts(app.prisma, app.dmsMessaging);
+      const result = await dispatchPendingWhatsappAlerts(app.prisma, app.dmsMessaging, app.tracking3d);
 
       if (result.sent > 0 || result.failed > 0) {
 

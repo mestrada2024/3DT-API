@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
 
     ports:
-      - "3010:3010"
+      - "127.0.0.1:3010:3010"
 
     env_file:
       - .env
@@ -39,7 +39,7 @@ services:
       - mariadb_data:/var/lib/mysql
 
     ports:
-      - "3307:3306"
+      - "127.0.0.1:3307:3306"
 
     healthcheck:
       test:
@@ -58,13 +58,15 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # nginx termina TLS en el puerto 443 (estándar HTTPS) y hace proxy
-        # interno al puerto 3010, donde escucha la app en HTTP plano dentro
-        # del contenedor. Se movió de 3011 a 443 el 2026-10-06 porque 3DT
-        # solo permite tráfico saliente de webhooks hacia el puerto HTTPS
-        # estándar (ver docs/dms-messaging.md). El frontend llama a la API
-        # por HTTPS en el 443, pasando por nginx.
-        VITE_API_BASE_URL: https://129.80.217.232
+        # El 443 público ahora lo maneja Nginx Proxy Manager (NPM), que
+        # solo conoce el dominio de id-docs (lexid.dms-smart.cloud) — una
+        # petición HTTPS por IP a ese puerto la rechaza en el handshake TLS
+        # (unrecognized_name), lo que dejó el frontend 100% roto hasta
+        # encontrarlo (2026-10-08). Hasta que dms-api tenga su propio
+        # proxy host en NPM con dominio propio, usamos el 3011 (nginx del
+        # host, sin pasar por NPM, ya confirmado funcionando con el
+        # webhook de 3Dtracking).
+        VITE_API_BASE_URL: https://129.80.217.232:3011
 
     container_name: dms-frontend
 

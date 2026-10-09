@@ -111,6 +111,22 @@ export class DmsMessagingClient {
     const responseText =
       await response.text();
 
+    /**
+     * Log completo de la respuesta cruda de DMS SMART (no solo el
+     * success/message que ya usamos) — pedido explícito del usuario
+     * 2026-10-08 tras un caso donde nuestro sistema marcó
+     * whatsappStatus=sent (DMS SMART respondió success:true) pero el
+     * mensaje nunca llegó al teléfono. No tenemos ningún webhook de
+     * confirmación de entrega de WhatsApp — esto es lo único que
+     * queda de nuestro lado para poder revisar después qué contestó
+     * DMS SMART exactamente, campo por campo, no solo los que ya
+     * leíamos.
+     */
+    console.log(
+      "DMS_MESSAGING_SEND_RESPONSE",
+      JSON.stringify({ phone: payload.phone, templateId: payload.templateId, httpStatus: response.status, rawBody: responseText })
+    );
+
     let data: { success?: boolean; message?: string; error?: string } = {};
 
     try {

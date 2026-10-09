@@ -177,12 +177,32 @@ const webhooks3dtRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(200).send({ success: true, stored: false, reason: "unitName no identificado" });
       }
 
+      /**
+       * 3Dtracking manda el nombre de la unidad con un sufijo entre
+       * paréntesis según el canal de origen (ej. "Telefono Mauricio
+       * (Telemetria)") que no está en Unit.name ("Telefono Mauricio").
+       * El `contains` de abajo solo matchea si el valor guardado
+       * CONTIENE lo que mandó el webhook — con el sufijo puesto, el
+       * nombre real (más corto) nunca lo contiene, y la alerta se
+       * pierde en silencio (caso real: Pánico de "Telefono Mauricio",
+       * 2026-10-06 16:54, nunca se guardó). Se intenta también con el
+       * sufijo recortado.
+       */
+      const strippedUnitName = parsed.unitName.replace(/\s*\([^)]*\)\s*$/, "").trim();
+
       const unit = await app.prisma.unit.findFirst({
         where: {
           OR: [
             { name: { contains: parsed.unitName } },
             { plate: { contains: parsed.unitName } },
-            { externalId: parsed.unitName }
+            { externalId: parsed.unitName },
+            ...(strippedUnitName && strippedUnitName !== parsed.unitName
+              ? [
+                  { name: { contains: strippedUnitName } },
+                  { plate: { contains: strippedUnitName } },
+                  { externalId: strippedUnitName }
+                ]
+              : [])
           ]
         },
         select: { externalId: true, name: true, companyUid: true }

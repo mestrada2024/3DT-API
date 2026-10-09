@@ -1,20 +1,23 @@
 import { PrismaClient } from "@prisma/client";
 
 import { DmsMessagingClient } from "../integrations/dms-messaging/messaging.client";
+import { Tracking3DService } from "../integrations/3dtracking/tracking.service";
 
 const BATCH_LIMIT = 20;
 /**
- * Notificaciones por WhatsApp restringidas a esta unidad únicamente
- * (instrucción explícita del usuario, 2026-09-21) — mientras se
- * investiga por qué los mensajes no están llegando, se acota el
- * despacho a "Telefono Mauricio" (22A847) para no seguir enviando
- * mensajes reales por otras unidades. No afecta la detección/
- * almacenamiento (sigue igual para las demás unidades habilitadas,
- * ej. 5D23E9 para combustible) — solo el envío queda pausado para
- * ellas, sus eventos quedan pendientes (whatsappStatus NULL) por si
- * se levanta la restricción después.
+ * Despacho automático de WhatsApp habilitado por empresa — pedido
+ * explícito del usuario 2026-10-08: se saca la restricción anterior
+ * a una sola unidad (22A847, que era temporal mientras se investigaba
+ * por qué no llegaban los mensajes — ya resuelto, ver el fix de
+ * matching de nombre en webhooks-3dt.ts) y en su lugar se acota a la
+ * flota de DADA-DADA (2C809B) — mismo alcance que ya usa el resto del
+ * sistema para esta empresa (ver ENABLED_CLIENT_COMPANY_UIDS en
+ * webhooks-3dt.ts y critical-alert.service.ts). Qué tipos de alerta
+ * notifican por WhatsApp ya lo decide AllowedAlertType (configurable
+ * desde el módulo Alertas) — esto solo acota por empresa, no por tipo
+ * de alerta ni por unidad individual.
  */
-const WHATSAPP_DISPATCH_ENABLED_UNIT_UIDS = new Set(["22A847"]);
+const WHATSAPP_DISPATCH_ENABLED_COMPANY_UIDS = new Set(["2C809B"]);
 
 export interface DispatchResult {
   reason: "not_configured" | "ok";
@@ -32,6 +35,24 @@ export interface DispatchResult {
 }
 
 /**
+ * DMS SMART/WhatsApp no entrega al número salvadoreño de 8 dígitos
+ * con el código de país (503) por delante, aunque la API conteste
+ * success:true igual — confirmado con una prueba A/B real 2026-10-08
+ * (mismo destinatario: "50377373997" no llegó, "77373997" sí). La
+ * mayoría de empresas ya guardan el número en formato local de 8
+ * dígitos (a veces con espacio, ej. "6304 4451") — DADA-DADA es la
+ * única que lo tiene con 503 adelante. Se recorta acá, al momento de
+ * enviar, en vez de tocar los datos guardados en Company.contactPhone
+ * (no se sabe si DMS SMART trata igual a todos los números
+ * salvadoreños con 503, o si es específico de estos 3 — recortar en
+ * el envío es reversible y no afecta cómo se ve el dato en el admin).
+ */
+function normalizePhone(raw: string): string {
+  const digits = raw.trim().replace(/[^0-9]/g, "");
+  return digits.length === 11 && digits.startsWith("503") ? digits.slice(3) : digits;
+}
+
+/**
  * Company.contactPhone (y por lo tanto CriticalAlertEvent.contactPhone,
  * copiado de ahí al momento de guardar la alarma) puede traer varios
  * números separados por coma — se envía un mensaje independiente a
@@ -40,7 +61,7 @@ export interface DispatchResult {
 export function parsePhones(contactPhone: string): string[] {
   return contactPhone
     .split(",")
-    .map((p) => p.trim())
+    .map((p) => normalizePhone(p))
     .filter((p) => p.length > 0);
 }
 
@@ -89,7 +110,8 @@ export function buildLocationLink(latitude: unknown, longitude: unknown): string
  */
 export async function dispatchPendingWhatsappAlerts(
   prisma: PrismaClient,
-  dmsMessaging: DmsMessagingClient
+  dmsMessaging: DmsMessagingClient,
+  tracking3d: Tracking3DService
 ): Promise<DispatchResult> {
 
   const config = await prisma.whatsappAlertConfig.findFirst({
@@ -115,11 +137,40 @@ export async function dispatchPendingWhatsappAlerts(
       whatsappStatus: null,
       contactPhone: { not: null },
       alertTypeCode: { in: allowedCodes },
-      unitUid: { in: [...WHATSAPP_DISPATCH_ENABLED_UNIT_UIDS] }
+      companyUid: { in: [...WHATSAPP_DISPATCH_ENABLED_COMPANY_UIDS] }
     },
     orderBy: { occurredAt: "asc" },
     take: BATCH_LIMIT
   });
+
+  /**
+   * El despacho AUTOMÁTICO consulta el teléfono de contacto en vivo
+   * contra 3Dtracking (campo "Teléfono de la persona de contacto" del
+   * panel, ContactPhone en su API) en vez de usar
+   * CriticalAlertEvent.contactPhone (una copia tomada al momento de
+   * guardar la alarma, que puede quedar desactualizada si cambian el
+   * contacto en 3DT después) — pedido explícito del usuario
+   * 2026-10-08. Una sola llamada por corrida (no por evento) y con
+   * fallback al valor guardado si 3DT no responde, para no bloquear
+   * el despacho por un problema de 3Dtracking.
+   */
+  let liveContactPhoneByCompany = new Map<string, string | null>();
+
+  if (pending.length > 0) {
+
+    try {
+
+      const session = await tracking3d.authenticate();
+      const companies = await tracking3d.getCompanyList(session);
+
+      liveContactPhoneByCompany = new Map(
+        companies.map((c) => [c.Uid, c.ContactPhone || null])
+      );
+
+    } catch {
+      // Sin esto, cada evento cae al contactPhone guardado (ver abajo).
+    }
+  }
 
   const result: DispatchResult = {
     reason: "ok",
@@ -140,7 +191,13 @@ export async function dispatchPendingWhatsappAlerts(
       continue;
     }
 
-    const phones = parsePhones(event.contactPhone as string);
+    const liveContactPhone = event.companyUid
+      ? liveContactPhoneByCompany.get(event.companyUid)
+      : undefined;
+
+    const contactPhone = liveContactPhone || event.contactPhone;
+
+    const phones = parsePhones(contactPhone as string);
 
     if (phones.length === 0) {
 
@@ -322,7 +379,7 @@ export interface ResendResult {
  * Reenvía el WhatsApp de UN evento puntual, disparado a mano desde el
  * módulo de Alertas del frontend (botón "Reenviar WhatsApp"). A
  * diferencia de dispatchPendingWhatsappAlerts no aplica
- * WHATSAPP_DISPATCH_ENABLED_UNIT_UIDS ni exige whatsappStatus null —
+ * WHATSAPP_DISPATCH_ENABLED_COMPANY_UIDS ni exige whatsappStatus null —
  * es una acción explícita de un usuario root/admin sobre un evento
  * específico que ya confirmó reenviar (el frontend muestra
  * buildWhatsappPreview antes de llegar acá), no el despacho
