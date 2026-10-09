@@ -86,15 +86,17 @@ function AlertsSubmodule() {
                 <td>{alert.description || "—"}</td>
                 <td>{alert.matchSystemName || "—"}</td>
                 <td>
-                  <label className="toggle">
-                    <input
-                      type="checkbox"
-                      checked={alert.notifyWhatsapp}
-                      disabled={savingId === alert.id}
-                      onChange={() => handleToggle(alert)}
-                    />
-                    <span>{alert.notifyWhatsapp ? "Sí" : "No"}</span>
-                  </label>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={alert.notifyWhatsapp}
+                    className={alert.notifyWhatsapp ? "switch switch-on" : "switch switch-off"}
+                    disabled={savingId === alert.id}
+                    onClick={() => handleToggle(alert)}
+                  >
+                    <span className="switch-knob" />
+                  </button>
+                  <span className="switch-label">{alert.notifyWhatsapp ? "Sí" : "No"}</span>
                 </td>
               </tr>
             ))}

@@ -8,7 +8,7 @@ import {
 
 import { buildWhatsappPreview, resendWhatsappForEvent } from "../services/whatsapp-dispatch.service";
 
-import { getAllowedCompanyUids, requireRoot, requireWrite } from "../services/access-control.service";
+import { getAllowedCompanyUids, requireWrite } from "../services/access-control.service";
 
 import { getActorFromRequest, logAction } from "../services/audit-log.service";
 
@@ -429,8 +429,13 @@ const criticalAlertRoutes:
      *
      * Activa/desactiva el envío por WhatsApp de un tipo de alerta
      * (notifyWhatsapp) y/o si está activa en el escaneo (active). Es
-     * una configuración global de la cuenta (no por empresa), por eso
-     * requiere rol root — ver docs/dms-messaging.md.
+     * una configuración global de la cuenta (no por empresa) — antes
+     * pedía rol root, pero el toggle no respondía para admin (ver
+     * incidente 2026-10-09: se veía como si el checkbox no reaccionara,
+     * en realidad el backend lo rechazaba en silencio). Pedido
+     * explícito del usuario: root y admin pueden, igual que el resto
+     * de acciones de escritura de este módulo (ver requireWrite en
+     * resend-whatsapp más abajo).
      */
     app.patch<{
       Params: CriticalAlertIdParams;
@@ -441,7 +446,7 @@ const criticalAlertRoutes:
         preHandler: async (request, reply) => {
 
           await request.jwtVerify();
-          await requireRoot(request, reply);
+          await requireWrite(request, reply);
 
         }
       },

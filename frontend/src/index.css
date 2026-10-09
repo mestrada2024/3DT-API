@@ -922,6 +922,54 @@ tbody tr:last-child td {
   font-size: 13px;
 }
 
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  border: none;
+  border-radius: 999px;
+  padding: 0;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background-color 0.15s ease;
+}
+
+.switch-off {
+  background: var(--color-border);
+}
+
+.switch-on {
+  background: var(--color-online);
+}
+
+.switch:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s ease;
+}
+
+.switch-on .switch-knob {
+  transform: translateX(18px);
+}
+
+.switch-label {
+  margin-left: 8px;
+  font-size: 13px;
+  vertical-align: middle;
+}
+
 .radio-group {
   display: inline-flex;
   align-items: center;

@@ -239,6 +239,33 @@ const webhooks3dtRoutes: FastifyPluginAsync = async (app) => {
         matchedType?.code ||
         `WEBHOOK_${(parsed.alertName || "UNKNOWN").toUpperCase().replace(/[^A-Z0-9]+/g, "_").slice(0, 40)}`;
 
+      /**
+       * Alertname sin tipo conocido en el catálogo (ej. una categoría
+       * nueva de 3DT como "Alertas de Variación del Sensor" que todavía
+       * no vigilábamos) — se da de alta sola en CriticalAlertType para
+       * que aparezca en el módulo Alertas y se pueda activar/desactivar
+       * el WhatsApp a mano, igual que el resto. Pedido explícito del
+       * usuario 2026-10-09: nace SIEMPRE desactivada para WhatsApp (no
+       * se toca AllowedAlertType acá) — alguien tiene que habilitarla
+       * a propósito desde el módulo, no se envía nada hasta entonces.
+       * upsert por si dos webhooks con el mismo alertname nuevo llegan
+       * casi al mismo tiempo (code es unique).
+       */
+      if (!matchedType && parsed.alertName) {
+
+        await app.prisma.criticalAlertType.upsert({
+          where: { code: alertTypeCode },
+          create: {
+            code: alertTypeCode,
+            name: parsed.alertName,
+            description: "Descubierta automáticamente por webhook de 3Dtracking",
+            matchSystemName: null,
+            active: true
+          },
+          update: {}
+        });
+      }
+
       const occurredAt = parsed.datetime && !isNaN(Date.parse(parsed.datetime))
         ? new Date(parsed.datetime)
         : new Date();
