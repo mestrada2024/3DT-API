@@ -354,11 +354,11 @@ const criticalAlertRoutes:
 
           /**
            * Sin sortBy explícito (click en una columna del frontend):
-           * orden por defecto con las alertas pendientes de WhatsApp
-           * primero (whatsappStatus NULL ordena primero en ASC) y,
-           * dentro de cada grupo, las más recientes primero — pedido
-           * explícito del usuario 2026-10-06 para no tener que buscar
-           * las pendientes entre las ya enviadas.
+           * orden por defecto por fecha, más recientes primero —
+           * pedido explícito del usuario 2026-10-13 (reemplaza el
+           * default anterior de "pendientes de WhatsApp primero" del
+           * 2026-10-06). Para encontrar pendientes ahora se usa el
+           * filtro/columna de WhatsApp, no el orden por defecto.
            */
           const orderBy = request.query.sortBy
             ? (() => {
@@ -370,7 +370,7 @@ const criticalAlertRoutes:
                 );
                 return { [field]: direction };
               })()
-            : [{ whatsappStatus: "asc" as const }, { occurredAt: "desc" as const }];
+            : { occurredAt: "desc" as const };
 
           const [events, total] =
             await Promise.all([

@@ -1,5 +1,7 @@
 import { FastifyPluginAsync } from "fastify";
 
+import { ingestAlertEvent } from "../services/alert-ingest.service";
+
 interface WebhookParams {
   secret: string;
 }
@@ -177,95 +179,6 @@ const webhooks3dtRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(200).send({ success: true, stored: false, reason: "unitName no identificado" });
       }
 
-      /**
-       * 3Dtracking manda el nombre de la unidad con un sufijo entre
-       * paréntesis según el canal de origen (ej. "Telefono Mauricio
-       * (Telemetria)") que no está en Unit.name ("Telefono Mauricio").
-       * El `contains` de abajo solo matchea si el valor guardado
-       * CONTIENE lo que mandó el webhook — con el sufijo puesto, el
-       * nombre real (más corto) nunca lo contiene, y la alerta se
-       * pierde en silencio (caso real: Pánico de "Telefono Mauricio",
-       * 2026-10-06 16:54, nunca se guardó). Se intenta también con el
-       * sufijo recortado.
-       */
-      const strippedUnitName = parsed.unitName.replace(/\s*\([^)]*\)\s*$/, "").trim();
-
-      const unit = await app.prisma.unit.findFirst({
-        where: {
-          OR: [
-            { name: { contains: parsed.unitName } },
-            { plate: { contains: parsed.unitName } },
-            { externalId: parsed.unitName },
-            ...(strippedUnitName && strippedUnitName !== parsed.unitName
-              ? [
-                  { name: { contains: strippedUnitName } },
-                  { plate: { contains: strippedUnitName } },
-                  { externalId: strippedUnitName }
-                ]
-              : [])
-          ]
-        },
-        select: { externalId: true, name: true, companyUid: true }
-      });
-
-      if (!unit) {
-        app.log.warn({ unitName: parsed.unitName }, "3DT webhook: unidad no encontrada localmente");
-        return reply.code(200).send({ success: true, stored: false, reason: "unidad no encontrada" });
-      }
-
-      const ENABLED_CLIENT_COMPANY_UIDS = new Set(["2C809B"]);
-
-      if (!unit.companyUid || !ENABLED_CLIENT_COMPANY_UIDS.has(unit.companyUid)) {
-        app.log.info(
-          { unitName: unit.name, companyUid: unit.companyUid },
-          "3DT webhook: empresa fuera de alcance, no se guarda"
-        );
-        return reply.code(200).send({ success: true, stored: false, reason: "empresa fuera de alcance" });
-      }
-
-      const company = await app.prisma.company.findUnique({
-        where: { uid: unit.companyUid },
-        select: { contactPhone: true }
-      });
-
-      const matchedType = parsed.alertName
-        ? await app.prisma.criticalAlertType.findFirst({
-            where: { name: { contains: parsed.alertName } },
-            select: { code: true, name: true }
-          })
-        : null;
-
-      const alertTypeCode =
-        matchedType?.code ||
-        `WEBHOOK_${(parsed.alertName || "UNKNOWN").toUpperCase().replace(/[^A-Z0-9]+/g, "_").slice(0, 40)}`;
-
-      /**
-       * Alertname sin tipo conocido en el catálogo (ej. una categoría
-       * nueva de 3DT como "Alertas de Variación del Sensor" que todavía
-       * no vigilábamos) — se da de alta sola en CriticalAlertType para
-       * que aparezca en el módulo Alertas y se pueda activar/desactivar
-       * el WhatsApp a mano, igual que el resto. Pedido explícito del
-       * usuario 2026-10-09: nace SIEMPRE desactivada para WhatsApp (no
-       * se toca AllowedAlertType acá) — alguien tiene que habilitarla
-       * a propósito desde el módulo, no se envía nada hasta entonces.
-       * upsert por si dos webhooks con el mismo alertname nuevo llegan
-       * casi al mismo tiempo (code es unique).
-       */
-      if (!matchedType && parsed.alertName) {
-
-        await app.prisma.criticalAlertType.upsert({
-          where: { code: alertTypeCode },
-          create: {
-            code: alertTypeCode,
-            name: parsed.alertName,
-            description: "Descubierta automáticamente por webhook de 3Dtracking",
-            matchSystemName: null,
-            active: true
-          },
-          update: {}
-        });
-      }
-
       const occurredAt = parsed.datetime && !isNaN(Date.parse(parsed.datetime))
         ? new Date(parsed.datetime)
         : new Date();
@@ -282,28 +195,22 @@ const webhooks3dtRoutes: FastifyPluginAsync = async (app) => {
 
       try {
 
-        const created = await app.prisma.criticalAlertEvent.create({
-          data: {
-            alertTypeCode,
-            alertTypeName: parsed.alertName || matchedType?.name || "Alerta de 3Dtracking (webhook)",
-            unitUid: unit.externalId,
-            unitName: unit.name,
-            companyUid: unit.companyUid,
-            contactPhone: company?.contactPhone || null,
-            driverName: parsed.driverName || null,
-            address: parsed.address || null,
-            description,
-            occurredAt
-          }
+        const result = await ingestAlertEvent(app.prisma, {
+          unitName: parsed.unitName,
+          alertName: parsed.alertName,
+          occurredAt,
+          description,
+          address: parsed.address,
+          driverName: parsed.driverName
         });
 
-        return reply.code(200).send({ success: true, stored: true, eventId: created.id });
+        if (!result.stored) {
+          app.log.info({ unitName: parsed.unitName, reason: result.reason }, "3DT webhook: no se guardó");
+        }
+
+        return reply.code(200).send({ success: true, stored: result.stored, eventId: result.eventId, reason: result.reason });
 
       } catch (error) {
-
-        if ((error as { code?: string })?.code === "P2002") {
-          return reply.code(200).send({ success: true, stored: false, reason: "duplicado" });
-        }
 
         app.log.error(error, "3DT webhook: error guardando el evento");
         return reply.code(200).send({ success: false, stored: false });

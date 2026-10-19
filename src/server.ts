@@ -77,6 +77,9 @@ import whatsappDispatchSchedulerPlugin
 import unitLiveStatusSchedulerPlugin
   from "./plugins/unit-live-status-scheduler";
 
+import alerts3dScanSchedulerPlugin
+  from "./plugins/alerts3d-scan-scheduler";
+
 
 const app =
   Fastify({
@@ -99,7 +102,18 @@ async function start() {
           ? true
           : process.env.CORS_ORIGIN
               .split(",")
-              .map((origin) => origin.trim())
+              .map((origin) => origin.trim()),
+      /**
+       * El default de @fastify/cors (v11) es "GET,HEAD,POST" — alcanzaba
+       * mientras frontend y API no estaban en dominios distintos de
+       * verdad (probado por IP/puerto, o con curl, que no aplica CORS).
+       * Apenas quedaron en dominios separados (dada-fleet/dada-api,
+       * 2026-10-09) cualquier PATCH/DELETE/PUT cross-origin empezó a
+       * fallar en el preflight con un error de red genérico en el
+       * navegador (no un error de la API) — ver el toggle de WhatsApp
+       * en el módulo Alertas.
+       */
+      methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]
     }
   );
 
@@ -141,6 +155,10 @@ async function start() {
 
   await app.register(
     whatsappDispatchSchedulerPlugin
+  );
+
+  await app.register(
+    alerts3dScanSchedulerPlugin
   );
 
 

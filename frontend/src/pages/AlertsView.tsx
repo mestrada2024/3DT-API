@@ -25,6 +25,7 @@ function whatsappBadgeLabel(status: string | null): string {
   if (status === "sent") return "Enviado";
   if (status === "error") return "Error";
   if (status === "sending") return "Enviando...";
+  if (status === "not_configured") return "No configurada";
   return "Pendiente";
 }
 

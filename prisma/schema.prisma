@@ -281,6 +281,19 @@ model CriticalAlertScanCursor {
   updatedAt DateTime @updatedAt
 }
 
+/**
+ * Cursor de Alerts/List de la API v2 de 3Dtracking
+ * (apiv2.3dtracking.net) — ver src/services/alerts3d-scan.service.ts.
+ * startUid es String (no BigInt): el formato del cursor que devuelve
+ * esa API no está confirmado como numérico (ver AlertUID tipo
+ * "AL657016472" en los datos reales).
+ */
+model Alerts3DScanCursor {
+  id        Int      @id @default(1)
+  startUid  String?
+  updatedAt DateTime @updatedAt
+}
+
 model UnitLiveStatusCursor {
   id               Int      @id @default(1)
   positionsStartId BigInt?
