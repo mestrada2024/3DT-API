@@ -857,6 +857,13 @@ tbody tr:last-child td {
 
 .company-checklist-compact {
   max-height: 100px;
+  /* Bug real encontrado 2026-10-26: sin max-width, el flex-wrap de
+     este checklist (usado dentro de una celda de tabla en modo
+     edición) crecía horizontalmente sin límite con la lista completa
+     de empresas, empujando la columna "Colas" fuera de la pantalla —
+     técnicamente alcanzable con scroll horizontal de .table-wrapper,
+     pero invisible en la práctica. */
+  max-width: 240px;
 }
 
 .company-check {
@@ -1139,4 +1146,649 @@ tbody tr:last-child td {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   font-size: 14px;
+}
+
+/* ---------- Chat interno: tickets (fila clickeable + panel lateral) ---------- */
+
+.row-clickable {
+  cursor: pointer;
+}
+
+.row-clickable:hover {
+  background: var(--color-unknown-bg);
+}
+
+.side-panel-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 24, 40, 0.35);
+  z-index: 1000;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.side-panel {
+  width: 380px;
+  max-width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+@media (max-width: 640px) {
+  .side-panel {
+    width: 100%;
+  }
+}
+
+/* ---------- Hilo de mensajes de ticket (bot / cliente / agente) ---------- */
+
+.ticket-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ticket-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.ticket-msg {
+  align-self: flex-start;
+  max-width: 85%;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.ticket-msg-own {
+  align-self: flex-end;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.ticket-msg-bot {
+  background: var(--color-unknown-bg);
+}
+
+.ticket-msg-meta {
+  font-size: 11px;
+  opacity: 0.75;
+  margin-bottom: 2px;
+}
+
+.ticket-msg-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ticket-msg-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ticket-msg-attachment:hover {
+  border-color: var(--color-primary);
+}
+
+.ticket-msg-attachment-type {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-offline);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ticket-msg-attachment-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.ticket-msg-attachment-size {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.ticket-thread-form {
+  display: flex;
+  gap: 6px;
+}
+
+.ticket-thread-form input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------- Burbuja de chat interno (flotante, global) ---------- */
+
+.chat-bubble-button {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1100;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.chat-bubble-button:hover {
+  background: var(--color-primary-hover);
+}
+
+.chat-bubble-panel {
+  position: fixed;
+  right: 20px;
+  bottom: 84px;
+  z-index: 1100;
+  width: 320px;
+  max-width: calc(100vw - 40px);
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-bubble-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-bubble-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 12px;
+}
+
+.chat-bubble-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+@media (max-width: 640px) {
+  .chat-bubble-panel {
+    right: 16px;
+    left: 16px;
+    width: auto;
+  }
+
+  .chat-bubble-button {
+    right: 16px;
+    bottom: 16px;
+  }
+}
+
+/* ---------- Seguimiento en vivo (página pública /en-vivo/:token) ---------- */
+
+.live-page {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+}
+
+.live-page-center {
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.live-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 20px;
+  max-width: 360px;
+  text-align: center;
+}
+
+.live-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.live-title {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.live-muted {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.live-map {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.live-trips {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+}
+
+.live-trips .trip-chip {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 13px;
+  padding: 6px 12px;
+}
+
+.live-recenter {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 1000;
+}
+
+.live-footer {
+  padding: 10px 16px;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ---------- Campana de notificaciones ---------- */
+
+.app-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  order: 3;
+}
+
+.notif {
+  position: relative;
+}
+
+.notif-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.notif-badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+}
+
+.notif-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 950;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notif-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.notif-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notif-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.notif-item:hover {
+  border-color: var(--color-primary);
+}
+
+.notif-item-unread {
+  background: #eff4ff;
+  border-color: #c7d7fe;
+}
+
+.notif-item-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.notif-item-body {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+}
+
+.notif-item-when {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+/* ---------- Responsive: teléfono y tablet (pedido 2026-10-26) ----------
+   Va al final del archivo a propósito: estas reglas pisan las de
+   escritorio definidas arriba. En computadora nada de esto aplica. */
+
+.app-menu-toggle {
+  display: none;
+}
+
+@media (max-width: 1024px) {
+  .app-header {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 10px 16px;
+    gap: 0;
+    position: sticky;
+    top: 0;
+    z-index: 900;
+  }
+
+  .app-header-left {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0;
+  }
+
+  .app-header-actions {
+    order: 0;
+  }
+
+  .notif-panel {
+    position: fixed;
+    top: 60px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-width: none;
+  }
+
+  .app-menu-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    font-size: 20px;
+    line-height: 1;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    color: var(--color-text);
+    cursor: pointer;
+  }
+
+  .app-nav {
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: 10px;
+    max-height: calc(100vh - 140px);
+    overflow-y: auto;
+  }
+
+  .app-header-open .app-nav {
+    display: flex;
+  }
+
+  .app-nav-link {
+    width: 100%;
+    padding: 10px 12px;
+    justify-content: flex-start;
+  }
+
+  .app-nav-dropdown-menu {
+    position: static;
+    border: none;
+    box-shadow: none;
+    padding: 0 0 0 16px;
+  }
+
+  .app-header-right {
+    display: none;
+    justify-content: space-between;
+    padding-top: 10px;
+    margin-top: 8px;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .app-header-open .app-header-right {
+    display: flex;
+  }
+}
+
+@media (max-width: 640px) {
+  /* 16px evita el zoom automático de iOS al enfocar un campo. */
+  input,
+  select,
+  textarea,
+  .inline-panel .field input,
+  .inline-panel .field select,
+  .search-form input,
+  .template-textarea {
+    font-size: 16px;
+  }
+
+  .app-main {
+    padding: 16px 12px 88px;
+  }
+
+  .dashboard-toolbar h1 {
+    font-size: 19px;
+  }
+
+  .toolbar-actions {
+    width: 100%;
+  }
+
+  .toolbar-actions > * {
+    flex: 1 1 auto;
+  }
+
+  .search-form {
+    width: 100%;
+  }
+
+  .field-inline {
+    flex-wrap: wrap;
+  }
+
+  .submodule-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .submodule-tab {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .table-wrapper {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  thead th,
+  tbody td {
+    padding: 10px 10px;
+  }
+
+  table {
+    font-size: 13px;
+  }
+
+  .hide-sm {
+    display: none;
+  }
+
+  .dashboard-meta {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .pagination {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .unit-panel-actions {
+    flex-wrap: wrap;
+  }
+
+  /* Panel de unidad sobre el mapa (Rastreo/Trips): en teléfono pasa
+     a ser una hoja inferior en vez de tapar el mapa a la derecha. */
+  .unit-panel {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 55%;
+  }
+
+  .trips-map {
+    min-height: 50vh;
+  }
+
+  /* Chat: a pantalla completa en el teléfono. */
+  .chat-bubble-panel {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+    border: none;
+    z-index: 1200;
+  }
+
+  .chat-bubble-button-open {
+    display: none;
+  }
+
+  .ticket-thread-list {
+    max-height: 60vh;
+  }
+
+  .ticket-msg {
+    max-width: 92%;
+  }
+
+  /* Con el panel de un ticket abierto, el botón flotante taparía la
+     caja de respuesta. */
+  body:has(.side-panel-overlay) .chat-bubble-button {
+    display: none;
+  }
+
+  .field select {
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    color: var(--color-text);
+  }
+}
+
+.ticket-msg-own a {
+  color: #fff;
 }

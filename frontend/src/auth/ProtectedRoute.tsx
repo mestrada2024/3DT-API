@@ -1,6 +1,7 @@
 import { Navigate, Outlet } from "react-router-dom";
 
 import { useAuth } from "./AuthContext";
+import { ChatBubble } from "../components/ChatBubble";
 
 export function ProtectedRoute() {
   const { isAuthenticated } = useAuth();
@@ -9,5 +10,10 @@ export function ProtectedRoute() {
     return <Navigate to="/login" replace />;
   }
 
-  return <Outlet />;
+  return (
+    <>
+      <Outlet />
+      <ChatBubble />
+    </>
+  );
 }

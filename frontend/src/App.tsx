@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { RootRoute } from "./auth/RootRoute";
+import { DenyRoleRoute } from "./auth/DenyRoleRoute";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { SimsAdmin } from "./pages/SimsAdmin";
@@ -11,31 +12,42 @@ import { UnitsAdmin } from "./pages/UnitsAdmin";
 import { CompaniesAdmin } from "./pages/CompaniesAdmin";
 import { UsersAdmin } from "./pages/UsersAdmin";
 import { MessagingAdmin } from "./pages/MessagingAdmin";
+import { QueuesAdmin } from "./pages/QueuesAdmin";
 import { AlertsView } from "./pages/AlertsView";
 import { RastreoView } from "./pages/RastreoView";
+import { TicketsView } from "./pages/TicketsView";
+import { FaqAdmin } from "./pages/FaqAdmin";
 import { TripsView } from "./pages/TripsView";
 import { DriverEventsReport } from "./pages/DriverEventsReport";
+import { LiveTrackView } from "./pages/LiveTrackView";
 
 export function App() {
   return (
     <AuthProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/en-vivo/:token" element={<LiveTrackView />} />
 
         <Route element={<ProtectedRoute />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/admin/vehiculos" element={<UnitsAdmin />} />
           <Route path="/admin/trackers" element={<TrackersAdmin />} />
           <Route path="/admin/sims" element={<SimsAdmin />} />
-          <Route path="/admin/empresas" element={<CompaniesAdmin />} />
           <Route path="/alertas" element={<AlertsView />} />
           <Route path="/rastreo" element={<RastreoView />} />
           <Route path="/trips/:unitId" element={<TripsView />} />
           <Route path="/estadisticas/eventos-conductor" element={<DriverEventsReport />} />
+          <Route path="/tickets" element={<TicketsView />} />
+
+          <Route element={<DenyRoleRoute roles={["cliente"]} />}>
+            <Route path="/admin/empresas" element={<CompaniesAdmin />} />
+            <Route path="/faq" element={<FaqAdmin />} />
+          </Route>
 
           <Route element={<RootRoute />}>
             <Route path="/admin/usuarios" element={<UsersAdmin />} />
             <Route path="/admin/mensajeria" element={<MessagingAdmin />} />
+            <Route path="/admin/colas" element={<QueuesAdmin />} />
           </Route>
         </Route>
 

@@ -1,4 +1,4 @@
-import { apiRequest } from "./client";
+import { API_BASE_URL, ApiError, apiRequest, getStoredToken } from "./client";
 
 export interface Paginated<T> {
   success: boolean;
@@ -421,23 +421,29 @@ export interface AdminUser {
   id: number;
   username: string;
   role: string;
+  whatsapp: string | null;
   active: boolean;
   createdAt: string;
   companies: { uid: string; name: string }[];
+  queues: { id: number; name: string }[];
 }
 
 export interface CreateUserBody {
   username: string;
   password: string;
   role: string;
+  whatsapp?: string;
   companyUids: string[];
+  queueIds?: number[];
 }
 
 export interface UpdateUserBody {
   password?: string;
   role?: string;
+  whatsapp?: string;
   active?: boolean;
   companyUids?: string[];
+  queueIds?: number[];
 }
 
 export function listUsers() {
@@ -526,3 +532,247 @@ export function getDriverEventsReport(params: {
     `/api/v1/tracking/reports/driver-events?${qs.toString()}`
   );
 }
+
+// ---------- Chat interno: tickets / colas / FAQ (Fase 1 chatbot) ----------
+
+export interface ChatTicket {
+  id: number;
+  subject: string;
+  description: string;
+  priority: string;
+  status: string;
+  companyUid: string | null;
+  unitUid: string | null;
+  queueId: number | null;
+  requesterName: string | null;
+  requesterPhone: string | null;
+  createdByUserId: number | null;
+  createdByUsername: string | null;
+  assignedToUserId: number | null;
+  assignedToUsername: string | null;
+  botStatus: string | null;
+  botMenuQueueId: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function listChatTickets(params: { status?: string; queueId?: number; view?: "unclaimed" | "historico" } = {}) {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (params.queueId !== undefined) qs.set("queueId", String(params.queueId));
+  if (params.view) qs.set("view", params.view);
+  const query = qs.toString();
+  return apiRequest<{ success: boolean; data: ChatTicket[] }>(`/api/v1/tickets${query ? `?${query}` : ""}`);
+}
+
+export function getChatTicket(id: number) {
+  return apiRequest<{ success: boolean; data: ChatTicket }>(`/api/v1/tickets/${id}`);
+}
+
+export interface CreateChatTicketBody {
+  subject: string;
+  description: string;
+  priority?: string;
+  companyUid?: string;
+  queueId?: number;
+  requesterName?: string;
+  requesterPhone?: string;
+}
+
+export function createChatTicket(body: CreateChatTicketBody) {
+  return apiRequest<{ success: boolean; data: ChatTicket }>("/api/v1/tickets", { method: "POST", body });
+}
+
+export interface UpdateChatTicketBody {
+  status?: string;
+  priority?: string;
+  queueId?: number | null;
+  assignedToUserId?: number | null;
+  claim?: boolean;
+  release?: boolean;
+}
+
+export function updateChatTicket(id: number, body: UpdateChatTicketBody) {
+  return apiRequest<{ success: boolean; data: ChatTicket }>(`/api/v1/tickets/${id}`, { method: "PATCH", body });
+}
+
+export type ChatQueueKind = "principal" | "secundaria";
+export type ChatQueueDestination = "cola" | "agentes";
+
+export interface ChatQueue {
+  id: number;
+  name: string;
+  description: string | null;
+  kind: ChatQueueKind;
+  destination: ChatQueueDestination;
+  parentId: number | null;
+  sortOrder: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatQueueBody {
+  name?: string;
+  description?: string | null;
+  kind?: ChatQueueKind;
+  destination?: ChatQueueDestination;
+  parentId?: number | null;
+  sortOrder?: number;
+  active?: boolean;
+}
+
+export function listChatQueues() {
+  return apiRequest<{ success: boolean; data: ChatQueue[] }>("/api/v1/chat-queues");
+}
+
+export function createChatQueue(body: ChatQueueBody) {
+  return apiRequest<{ success: boolean; data: ChatQueue }>("/api/v1/chat-queues", {
+    method: "POST",
+    body
+  });
+}
+
+export function updateChatQueue(id: number, body: ChatQueueBody) {
+  return apiRequest<{ success: boolean; data: ChatQueue }>(`/api/v1/chat-queues/${id}`, {
+    method: "PATCH",
+    body
+  });
+}
+
+export interface ChatBotConfig {
+  greeting: string;
+  invalidOption: string;
+  transferMessage: string;
+}
+
+export function getChatBotConfig() {
+  return apiRequest<{ success: boolean; data: ChatBotConfig | null }>("/api/v1/chat-bot/config");
+}
+
+export function saveChatBotConfig(body: ChatBotConfig) {
+  return apiRequest<{ success: boolean; data: ChatBotConfig }>("/api/v1/chat-bot/config", {
+    method: "PUT",
+    body
+  });
+}
+
+export interface ChatAttachmentInfo {
+  id: number;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+export interface ChatMessage {
+  id: number;
+  ticketId: number;
+  senderType: "cliente" | "bot" | "agente";
+  senderUserId: number | null;
+  senderUsername: string | null;
+  body: string;
+  createdAt: string;
+  attachments: ChatAttachmentInfo[];
+}
+
+/**
+ * Descarga un adjunto del chat (ej. reporte PDF del bot). No usa
+ * apiRequest porque la respuesta es binaria, no JSON; el token va en
+ * el header igual que en el resto de las llamadas.
+ */
+export async function downloadChatAttachment(ticketId: number, attachment: ChatAttachmentInfo): Promise<void> {
+  const token = getStoredToken();
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/tickets/${ticketId}/attachments/${attachment.id}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  });
+
+  if (!response.ok) {
+    throw new ApiError(response.status, "No se pudo descargar el archivo");
+  }
+
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = attachment.fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+export function listChatMessages(ticketId: number) {
+  return apiRequest<{ success: boolean; data: ChatMessage[] }>(`/api/v1/tickets/${ticketId}/messages`);
+}
+
+export function sendChatMessage(ticketId: number, body: string) {
+  return apiRequest<{ success: boolean; data: { ticket: ChatTicket; messages: ChatMessage[] } }>(
+    `/api/v1/tickets/${ticketId}/messages`,
+    { method: "POST", body: { body } }
+  );
+}
+
+export interface QueueAgent {
+  id: number;
+  username: string;
+}
+
+export function listQueueAgents(queueId: number) {
+  return apiRequest<{ success: boolean; data: QueueAgent[] }>(`/api/v1/chat-queues/${queueId}/agents`);
+}
+
+// ---------- Notificaciones internas (campana) ----------
+
+export interface ChatNotification {
+  id: number;
+  userId: number;
+  ticketId: number | null;
+  type: string;
+  title: string;
+  body: string;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export function listNotifications() {
+  return apiRequest<{ success: boolean; data: { items: ChatNotification[]; unread: number } }>("/api/v1/notifications");
+}
+
+export function markNotificationRead(id: number) {
+  return apiRequest<{ success: boolean }>(`/api/v1/notifications/${id}/read`, { method: "POST" });
+}
+
+export function markAllNotificationsRead() {
+  return apiRequest<{ success: boolean }>("/api/v1/notifications/read-all", { method: "POST" });
+}
+
+export interface ChatFaq {
+  id: number;
+  question: string;
+  answer: string;
+  category: string | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function listChatFaq(params: { active?: boolean; category?: string; search?: string } = {}) {
+  const qs = new URLSearchParams();
+  if (params.active !== undefined) qs.set("active", String(params.active));
+  if (params.category) qs.set("category", params.category);
+  if (params.search) qs.set("search", params.search);
+  const query = qs.toString();
+  return apiRequest<{ success: boolean; data: ChatFaq[] }>(`/api/v1/faq${query ? `?${query}` : ""}`);
+}
+
+export interface CreateChatFaqBody {
+  question: string;
+  answer: string;
+  category?: string;
+  active?: boolean;
+}
+
+export function createChatFaq(body: CreateChatFaqBody) {
+  return apiRequest<{ success: boolean; data: ChatFaq }>("/api/v1/faq", { method: "POST", body });
+}
+

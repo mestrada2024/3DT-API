@@ -49,9 +49,18 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const { method = "GET", body, auth = true } = options;
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json"
-  };
+  /**
+   * Content-Type solo cuando realmente se manda body — mandarlo
+   * siempre rompía DELETE (y cualquier llamada sin body): Fastify
+   * rechaza con 400 "Body cannot be empty when content-type is set
+   * to 'application/json'" si llega el header sin bytes de body.
+   * Bug real encontrado 2026-10-26 con el botón Eliminar de Usuarios.
+   */
+  const headers: Record<string, string> = {};
+
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
 
   if (auth) {
     const token = getStoredToken();

@@ -6,11 +6,25 @@ datasource db {
   provider = "mysql"
 }
 
+/**
+ * role: "root" (superusuario técnico, sin cambios) | "admin"
+ * (administrador) | "supervisor" | "user" (agente) | "cliente" —
+ * taxonomía definida 2026-10-26 para el proyecto chatbot Dada Fleet,
+ * ver access-control.service.ts para qué puede hacer cada uno.
+ *
+ * whatsapp es obligatorio a nivel de aplicación (no DB) SOLO para
+ * "cliente" — ver WHATSAPP_REQUIRED_ROLES en routes/users.ts. Es la
+ * clave con la que un mensaje entrante (de WhatsApp o del chat web
+ * interno) se vincula a la cuenta del cliente, por eso es @unique —
+ * dos cuentas no pueden compartir el mismo número. admin/supervisor/
+ * agente/root no lo necesitan (se identifican con usuario/clave).
+ */
 model User {
   id           Int      @id @default(autoincrement())
   username     String   @unique
   passwordHash String
   role         String   @default("user")
+  whatsapp     String?  @unique
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -299,4 +313,195 @@ model UnitLiveStatusCursor {
   positionsStartId BigInt?
   sensorsStartId   BigInt?
   updatedAt        DateTime @updatedAt
+}
+
+/**
+ * Tickets de soporte — proyecto chatbot Dada Fleet (spec v1.0,
+ * 2026-10-26), Fase 1. Por ahora sin vínculo formal a User (mismo
+ * estilo que el resto del esquema — ver AuditLog.userId): se guarda
+ * el id y el username de quien crea/atiende, sin relación de Prisma.
+ * requesterName/requesterPhone quedan para tickets que en el futuro
+ * se originen desde WhatsApp antes de tener un login completo.
+ */
+/**
+ * Cola de soporte ("grupo de usuarios") — a la que se asignan
+ * agentes/supervisores (UserQueue) y tickets (ChatTicket.queueId).
+ * Definido 2026-10-26 para el modelo de permisos de tickets.
+ */
+/**
+ * Menú del chatbot (2026-10-26): cada cola es una opción del menú.
+ * - description: texto que el bot muestra como opción (si está
+ *   vacío, se usa name).
+ * - kind: "principal" (aparece en el menú inicial, parentId=null) o
+ *   "secundaria" (aparece dentro de la cola parentId).
+ * - destination: "cola" (al elegirla el bot muestra sus colas hijas)
+ *   o "agentes" (el ticket queda en esta cola, sin reclamar, para sus
+ *   agentes — "la cola del último mensaje").
+ * Ver src/services/chat-bot.service.ts.
+ */
+model ChatQueue {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String?  @db.Text
+  kind        String   @default("principal")
+  destination String   @default("agentes")
+  parentId    Int?
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([parentId])
+}
+
+/**
+ * A qué colas pertenece un usuario — mismo estilo que UserCompany
+ * (sin relación formal de Prisma a User, UIDs/ids de texto). Un
+ * agente ve lo sin reclamar de sus colas; un supervisor ve/actúa en
+ * todo lo de las suyas, sin importar a qué agente esté asignado.
+ */
+model UserQueue {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  queueId   Int
+  createdAt DateTime @default(now())
+
+  @@unique([userId, queueId])
+  @@index([queueId])
+}
+
+model ChatTicket {
+  id                  Int       @id @default(autoincrement())
+  subject             String
+  description         String    @db.Text
+  priority            String    @default("normal")
+  status              String    @default("abierto")
+  companyUid          String?
+  unitUid             String?
+  queueId             Int?
+  requesterName       String?
+  requesterPhone      String?
+  createdByUserId     Int?
+  createdByUsername   String?
+  assignedToUserId    Int?
+  assignedToUsername  String?
+  botStatus           String?
+  botMenuQueueId      Int?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([status])
+  @@index([companyUid])
+  @@index([createdAt])
+  @@index([queueId])
+  @@index([assignedToUserId])
+}
+
+/**
+ * Hilo de mensajes de un ticket. senderType: "cliente" (quien creó
+ * el ticket), "bot" (motor de menú) o "agente" (cualquier otro
+ * usuario que responde). Sin relación formal de Prisma, mismo estilo
+ * que el resto de las tablas de chat.
+ */
+model ChatMessage {
+  id             Int      @id @default(autoincrement())
+  ticketId       Int
+  senderType     String
+  senderUserId   Int?
+  senderUsername String?
+  body           String   @db.Text
+  createdAt      DateTime @default(now())
+
+  @@index([ticketId])
+}
+
+/**
+ * Archivo adjunto a un mensaje del chat — hoy solo los reportes PDF
+ * que genera el bot (ver report-pdf.service.ts). Se descarga por
+ * GET /tickets/:id/attachments/:attachmentId con la misma
+ * visibilidad que el ticket.
+ */
+model ChatAttachment {
+  id        Int      @id @default(autoincrement())
+  ticketId  Int
+  messageId Int
+  fileName  String
+  mimeType  String
+  sizeBytes Int
+  data      Bytes    @db.MediumBlob
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+  @@index([messageId])
+}
+
+/**
+ * Link efímero de seguimiento en vivo (2026-10-27): quien tiene el
+ * token ve el recorrido de la unidad sin login hasta expiresAt o
+ * revokedAt. Ver live-share.service.ts y GET /public/live/:token.
+ */
+model LiveShareLink {
+  id                Int       @id @default(autoincrement())
+  token             String    @unique @db.VarChar(64)
+  unitId            Int
+  ticketId          Int?
+  createdByUserId   Int?
+  createdByUsername String?
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  /// Con rango: recorrido histórico de ese período (mapa estático).
+  rangeFrom         DateTime?
+  rangeTo           DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([unitId])
+  @@index([expiresAt])
+}
+
+/**
+ * Notificación interna para un usuario (campana del encabezado). Hoy:
+ * type="agent_request" cuando un cliente pide un agente — se crea una
+ * fila por cada agente/supervisor de la cola elegida.
+ */
+model ChatNotification {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  ticketId  Int?
+  type      String
+  title     String
+  body      String    @db.Text
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@index([ticketId])
+}
+
+/**
+ * Textos fijos del bot — una sola fila (id=1). transferMessage admite
+ * {cola}, que se reemplaza por el nombre de la cola destino.
+ */
+model ChatBotConfig {
+  id              Int      @id @default(1)
+  greeting        String   @db.Text
+  invalidOption   String   @db.Text
+  transferMessage String   @db.Text
+  updatedAt       DateTime @updatedAt
+}
+
+/**
+ * Preguntas frecuentes administrables — proyecto chatbot Dada Fleet,
+ * Fase 1. `active=false` la saca de la consulta pública sin borrarla.
+ */
+model ChatFaq {
+  id         Int      @id @default(autoincrement())
+  question   String
+  answer     String   @db.Text
+  category   String?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([active])
+  @@index([category])
 }

@@ -327,6 +327,81 @@ async function getTripsFromLocalHistory(
   };
 }
 
+/**
+ * Viajes de un rango arbitrario (hasta días completos) solo desde el
+ * historial local — usado por el reporte PDF del chatbot
+ * (report-pdf.service.ts). No consulta 3Dtracking ni siquiera si el
+ * rango incluye hoy: Position se sincroniza cada 60s y un reporte de
+ * varios días no debería arriesgar el límite de tasa de 3DT.
+ */
+/** Hueco sin posiciones que corta un viaje en el reporte por rango —
+ * ver getUnitTripsForRange. */
+const RANGE_GAP_SPLIT_MINUTES = 10;
+
+export async function getUnitTripsForRange(
+  prisma: PrismaClient,
+  unitId: number,
+  from: Date,
+  to: Date
+): Promise<{ positionsChecked: number; maxSpeed: number; trips: Trip[] }> {
+
+  const positions = await prisma.position.findMany({
+    where: {
+      unitId,
+      recordedAt: { gte: from, lte: to }
+    },
+    orderBy: { recordedAt: "asc" },
+    select: { latitude: true, longitude: true, speed: true, recordedAt: true }
+  });
+
+  let maxSpeed = 0;
+
+  const points: RawTripPoint[] = positions.map((p) => {
+    const speed = p.speed !== null ? Number(p.speed) : 0;
+    if (speed > maxSpeed) maxSpeed = speed;
+    return {
+      lat: Number(p.latitude),
+      lng: Number(p.longitude),
+      speed,
+      timeMs: p.recordedAt.getTime(),
+      timeIso: p.recordedAt.toISOString(),
+      address: null,
+      odometer: null
+    };
+  });
+
+  /**
+   * Bug real encontrado al probar el reporte (2026-10-26, P5449D
+   * 01-15/10): buildTripsFromPoints solo cierra un viaje al recibir
+   * STOP_GAP_MINUTES de posiciones DETENIDAS, pero con el motor
+   * apagado muchas unidades directamente dejan de reportar — el viaje
+   * quedaba abierto hasta el día siguiente (viajes de 17 h y 62 h, un
+   * día con 69 h "en movimiento"). Acá se corta además en cualquier
+   * hueco de más de RANGE_GAP_SPLIT_MINUTES sin posiciones. No se
+   * cambió buildTripsFromPoints para no alterar el mapa de Trips sin
+   * revisarlo aparte.
+   */
+  const trips: Trip[] = [];
+  let segment: RawTripPoint[] = [];
+
+  for (const point of points) {
+    const previous = segment[segment.length - 1];
+    if (previous && point.timeMs - previous.timeMs > RANGE_GAP_SPLIT_MINUTES * 60000) {
+      trips.push(...buildTripsFromPoints(segment));
+      segment = [];
+    }
+    segment.push(point);
+  }
+
+  trips.push(...buildTripsFromPoints(segment));
+
+  return {
+    positionsChecked: points.length,
+    maxSpeed,
+    trips
+  };
+}
+
 export async function getUnitTripsForDate(
   prisma: PrismaClient,
   tracking3d: Tracking3DService,

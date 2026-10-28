@@ -3,6 +3,7 @@ import { NavLink, useLocation } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
 import { countUnreadCriticalAlertEvents } from "../api/admin";
+import { NotificationBell } from "./NotificationBell";
 
 const UNREAD_POLL_INTERVAL_MS = 45000;
 
@@ -41,6 +42,16 @@ const ESTADISTICAS_GROUP: NavGroup = {
     { to: "/estadisticas/eventos-conductor", label: "Eventos de conductor" }
   ]
 };
+
+const CHAT_GROUP: NavGroup = {
+  label: "Chat interno",
+  items: [
+    { to: "/tickets", label: "Tickets" },
+    { to: "/faq", label: "FAQ" }
+  ]
+};
+
+const CHAT_ITEM_ROOT_ONLY: NavItem = { to: "/admin/colas", label: "Colas y bot" };
 
 function NavDropdown({ group }: { group: NavGroup }) {
   const [open, setOpen] = useState(false);
@@ -96,12 +107,33 @@ export function AppHeader() {
 
   const isRoot = user?.role === "root";
 
+  /** El rol cliente no ve FAQ ni Administración (pedido 2026-10-26). */
+  const isCliente = user?.role === "cliente";
+
+  const chatGroup: NavGroup = isRoot
+    ? { ...CHAT_GROUP, items: [...CHAT_GROUP.items, CHAT_ITEM_ROOT_ONLY] }
+    : isCliente
+      ? { ...CHAT_GROUP, items: CHAT_GROUP.items.filter((item) => item.to !== "/faq") }
+      : CHAT_GROUP;
+
   const adminGroup: NavGroup = {
     label: "Administración",
     items: isRoot ? [...ADMIN_GROUP_ITEMS_BASE, ADMIN_GROUP_ITEM_ROOT_ONLY] : ADMIN_GROUP_ITEMS_BASE
   };
 
   const [unreadAlerts, setUnreadAlerts] = useState(0);
+
+  /**
+   * Menú hamburguesa — solo visible en pantallas angostas (teléfono,
+   * ver .app-menu-toggle en index.css); en computadora la barra se ve
+   * completa como siempre. Se cierra solo al navegar.
+   */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const location = useLocation();
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,9 +160,24 @@ export function AppHeader() {
   }, []);
 
   return (
-    <header className="app-header">
+    <header className={menuOpen ? "app-header app-header-open" : "app-header"}>
       <div className="app-header-left">
         <div className="app-brand">DADA DADA Fleet</div>
+
+        <div className="app-header-actions">
+        {!isCliente && <NotificationBell />}
+
+        <button
+          type="button"
+          className="app-menu-toggle"
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-label={menuOpen ? "Cerrar menú" : "Abrir menú"}
+          aria-expanded={menuOpen}
+        >
+          {menuOpen ? "✕" : "☰"}
+          {!menuOpen && unreadAlerts > 0 && <span className="app-nav-badge">{unreadAlerts > 99 ? "99+" : unreadAlerts}</span>}
+        </button>
+        </div>
 
         <nav className="app-nav">
           <NavLink
@@ -163,8 +210,9 @@ export function AppHeader() {
             {unreadAlerts > 0 && <span className="app-nav-badge">{unreadAlerts > 99 ? "99+" : unreadAlerts}</span>}
           </NavLink>
 
+          <NavDropdown group={chatGroup} />
           <NavDropdown group={ESTADISTICAS_GROUP} />
-          <NavDropdown group={adminGroup} />
+          {!isCliente && <NavDropdown group={adminGroup} />}
 
           {isRoot && (
             <NavLink

@@ -62,6 +62,27 @@ import webhooks3dtRoutes
 import reportsRoutes
   from "./routes/reports";
 
+import chatTicketsRoutes
+  from "./routes/chat-tickets";
+
+import chatFaqRoutes
+  from "./routes/chat-faq";
+
+import chatQueuesRoutes
+  from "./routes/chat-queues";
+
+import liveShareRoutes
+  from "./routes/live-share";
+
+import notificationsRoutes
+  from "./routes/notifications";
+
+import queryEngineRoutes
+  from "./routes/query-engine";
+
+import chatTicketReleaseSchedulerPlugin
+  from "./plugins/chat-ticket-release-scheduler";
+
 import tracking3dPlugin
   from "./plugins/tracking3d";
 
@@ -254,6 +275,59 @@ async function start() {
     {
       prefix: "/api/v1"
     }
+  );
+
+
+  await app.register(
+    chatTicketsRoutes,
+    {
+      prefix: "/api/v1"
+    }
+  );
+
+
+  await app.register(
+    chatFaqRoutes,
+    {
+      prefix: "/api/v1"
+    }
+  );
+
+
+  await app.register(
+    chatQueuesRoutes,
+    {
+      prefix: "/api/v1"
+    }
+  );
+
+
+  await app.register(
+    liveShareRoutes,
+    {
+      prefix: "/api/v1"
+    }
+  );
+
+
+  await app.register(
+    notificationsRoutes,
+    {
+      prefix: "/api/v1"
+    }
+  );
+
+
+  await app.register(
+    queryEngineRoutes,
+    {
+      prefix: "/api/v1"
+    }
+  );
+
+
+  await app.register(
+    chatTicketReleaseSchedulerPlugin
   );
 
 

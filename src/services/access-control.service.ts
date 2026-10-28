@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { FastifyRequest, FastifyReply } from "fastify";
 
-export type UserRole = "root" | "admin" | "user";
+export type UserRole = "root" | "admin" | "supervisor" | "user" | "cliente";
 
 /**
  * Devuelve las empresas asignadas a un usuario, o null si no aplica
@@ -25,6 +25,27 @@ export async function getAllowedCompanyUids(
   });
 
   return rows.map((row) => row.companyUid);
+}
+
+/**
+ * Colas de soporte ("grupos de usuarios") a las que pertenece un
+ * agente o supervisor — ver ChatQueue/UserQueue. A diferencia de
+ * getAllowedCompanyUids, acá root NO ve todo automáticamente: un
+ * root que necesite operar tickets también necesita estar asignado a
+ * una cola, porque las colas son organización de equipo de soporte,
+ * no alcance de datos de flota.
+ */
+export async function getUserQueueIds(
+  prisma: PrismaClient,
+  userId: number
+): Promise<number[]> {
+
+  const rows = await prisma.userQueue.findMany({
+    where: { userId },
+    select: { queueId: true }
+  });
+
+  return rows.map((row) => row.queueId);
 }
 
 /**
